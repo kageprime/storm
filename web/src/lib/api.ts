@@ -162,6 +162,23 @@ export function getFileContent(projectId: string, filePath: string): Promise<Res
   })
 }
 
+// --- Messages ---
+
+export type GoalMessage = {
+  role: string
+  content: string
+  metadata: Record<string, unknown> | null
+  timestamp: number
+}
+
+export function getGoalMessages(projectId: string, goalId: string) {
+  return request<{ messages: GoalMessage[] }>('GET', `/projects/${projectId}/goals/${goalId}/messages`)
+}
+
+export function getPreviewUrl(projectId: string, filePath: string): string {
+  return `${BASE}/preview/${projectId}/${filePath}`
+}
+
 // --- SSE ---
 
 export type GoalEvent = {

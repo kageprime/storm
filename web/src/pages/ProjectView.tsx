@@ -1,28 +1,36 @@
 import { useState, useEffect, useRef, FormEvent } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import * as api from '../lib/api'
 import type { Project } from '../lib/api'
 import { useAgentStream } from '../hooks/useAgentStream'
 import { ChatStream } from '../components/ChatStream'
-import { PreviewPanel } from '../components/PreviewPanel'
+import { RightPanel } from '../components/RightPanel'
+import { Group, Panel, Separator } from 'react-resizable-panels'
 
 export function ProjectView() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [project, setProject] = useState<Project | null>(null)
   const [goalText, setGoalText] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const [goalId, setGoalId] = useState<string | null>(null)
+  const [goalId, setGoalId] = useState<string | null>(() => searchParams.get('goal') || null)
   const [refreshKey, setRefreshKey] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const { messages, goalStatus, currentStep, totalSteps, steer, fileChangeCount } =
+  const { messages, goalStatus, currentStep, totalSteps, steer, fileChangeCount, addMessage, agentLogs, lastHtmlFile } =
     useAgentStream(id || null, goalId)
 
   useEffect(() => {
     if (!id) return
     api.getProject(id).then((res) => setProject(res.project)).catch(() => navigate('/'))
   }, [id, navigate])
+
+  // Sync goalId from URL params (handles manual URL edits)
+  useEffect(() => {
+    const urlGoal = searchParams.get('goal')
+    setGoalId(urlGoal || null)
+  }, [searchParams])
 
   // Refresh file tree when files change (step completes)
   useEffect(() => {
@@ -35,9 +43,12 @@ export function ProjectView() {
     e.preventDefault()
     if (!id || !goalText.trim()) return
     setSubmitting(true)
+    const text = goalText.trim()
+    addMessage({ role: 'user', text, type: 'user_message', timestamp: Date.now() })
     try {
-      const res = await api.submitGoal(id, goalText.trim())
+      const res = await api.submitGoal(id, text)
       setGoalId(res.goal.id)
+      setSearchParams({ goal: res.goal.id }, { replace: true })
       setGoalText('')
     } catch {
       // ignore
@@ -63,6 +74,7 @@ export function ProjectView() {
 
     if (goalStatus === 'completed' || goalStatus === 'failed' || goalStatus === 'cancelled') {
       setGoalId(null)
+      setSearchParams({}, { replace: true })
       await handleSubmitGoal(e)
       return
     }
@@ -101,52 +113,63 @@ export function ProjectView() {
         </div>
       </div>
 
-      {/* Three-pane body */}
+      {/* Body: Resizable split */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left: Chat */}
-        <div className="flex-1 flex flex-col min-w-0">
-          <ChatStream
-            messages={messages}
-            onSteer={steer}
-            goalStatus={goalStatus}
-            currentStep={currentStep}
-            totalSteps={totalSteps}
-          />
-        </div>
+        <Group orientation="horizontal">
+          {/* Left Pane: Chat & Input */}
+          <Panel defaultSize={60} minSize={25} className="flex flex-col min-w-0 bg-storm-bg">
+            <div className="flex-1 overflow-hidden flex flex-col">
+              <ChatStream
+                messages={messages}
+                onSteer={steer}
+                goalStatus={goalStatus}
+                currentStep={currentStep}
+                totalSteps={totalSteps}
+              />
+            </div>
+            
+            {/* Input bar */}
+            <div className="border-t border-storm-border px-4 py-4 bg-storm-surface/50 flex-shrink-0">
+              <form onSubmit={handleSendMessage} className="max-w-3xl mx-auto flex gap-3">
+                <input
+                  ref={inputRef}
+                  type="text"
+                  value={goalText}
+                  onChange={(e) => setGoalText(e.target.value)}
+                  placeholder={
+                    !goalId
+                      ? 'What should the agent do?'
+                      : isActive
+                        ? 'Send a message to the agent...'
+                        : 'Submit another goal...'
+                  }
+                  disabled={submitting}
+                  autoFocus
+                  className="flex-1 bg-storm-bg border border-storm-border rounded-xl px-4 py-3 text-storm-text text-sm focus:outline-none focus:border-storm-accent transition-colors disabled:opacity-40"
+                />
+                <button
+                  type="submit"
+                  disabled={submitting || !goalText.trim()}
+                  className="bg-storm-accent hover:bg-storm-accent-hover disabled:opacity-40 disabled:cursor-not-allowed text-white px-5 py-3 rounded-xl text-sm font-medium transition-colors"
+                >
+                  {submitting ? '...' : goalId && isActive ? 'Send' : 'Go'}
+                </button>
+              </form>
+            </div>
+          </Panel>
 
-        {/* Right: Preview panel */}
-        <div className="w-96 flex-shrink-0 hidden lg:flex">
-          <PreviewPanel projectId={id || null} refreshKey={refreshKey} />
-        </div>
-      </div>
+          <Separator className="w-1 bg-storm-border hover:bg-storm-accent/50 transition-colors cursor-col-resize z-10" />
 
-      {/* Input bar */}
-      <div className="border-t border-storm-border px-4 py-4 bg-storm-surface/50">
-        <form onSubmit={handleSendMessage} className="max-w-3xl mx-auto flex gap-3">
-          <input
-            ref={inputRef}
-            type="text"
-            value={goalText}
-            onChange={(e) => setGoalText(e.target.value)}
-            placeholder={
-              !goalId
-                ? 'What should the agent do?'
-                : isActive
-                  ? 'Send a message to the agent...'
-                  : 'Submit another goal...'
-            }
-            disabled={submitting}
-            autoFocus
-            className="flex-1 bg-storm-bg border border-storm-border rounded-xl px-4 py-3 text-storm-text text-sm focus:outline-none focus:border-storm-accent transition-colors disabled:opacity-40"
-          />
-          <button
-            type="submit"
-            disabled={submitting || !goalText.trim()}
-            className="bg-storm-accent hover:bg-storm-accent-hover disabled:opacity-40 disabled:cursor-not-allowed text-white px-5 py-3 rounded-xl text-sm font-medium transition-colors"
-          >
-            {submitting ? '...' : goalId && isActive ? 'Send' : 'Go'}
-          </button>
-        </form>
+          {/* Right Pane: Files/Preview */}
+          <Panel defaultSize={40} minSize={30} className="flex flex-col min-w-0">
+            <RightPanel
+              projectId={id || null}
+              refreshKey={refreshKey}
+              agentLogs={agentLogs}
+              previewPath={lastHtmlFile}
+            />
+          </Panel>
+        </Group>
       </div>
     </div>
   )

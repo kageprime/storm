@@ -11,7 +11,14 @@ const { sign } = jwt
 const auth = new Hono()
 
 auth.post('/register', async (c) => {
-  const { email, password } = await c.req.json()
+  let body
+  try {
+    body = await c.req.json()
+  } catch (e) {
+    c.status(400)
+    return c.json({ error: 'Invalid JSON payload', code: 'BAD_REQUEST' })
+  }
+  const { email, password } = body
 
   if (!email || !password) {
     c.status(400)
@@ -47,7 +54,14 @@ auth.post('/register', async (c) => {
 })
 
 auth.post('/login', async (c) => {
-  const { email, password } = await c.req.json()
+  let body
+  try {
+    body = await c.req.json()
+  } catch (e) {
+    c.status(400)
+    return c.json({ error: 'Invalid JSON payload', code: 'BAD_REQUEST' })
+  }
+  const { email, password } = body
 
   if (!email || !password) {
     c.status(400)

@@ -14,27 +14,29 @@ export type Variables = {
 }
 
 /**
- * Verify JWT from Authorization header and attach user info to context.
+ * Verify JWT from Authorization header or ?token= query param.
  * Sets c.set('user', { userId, email }) on success.
  */
-export async function authMiddleware(c: Context<{ Variables: Variables }>, next: Next): Promise<void> {
-  const authHeader = c.req.header('Authorization')
+export async function authMiddleware(c: Context<{ Variables: Variables }>, next: Next): Promise<Response | void> {
+  let token: string | null = c.req.query('token') || null
 
-  if (!authHeader?.startsWith('Bearer ')) {
-    c.status(401)
-    c.json({ error: 'Missing or invalid authorization header', code: 'UNAUTHORIZED' })
-    return
+  if (!token) {
+    const authHeader = c.req.header('Authorization')
+    if (authHeader?.startsWith('Bearer ')) {
+      token = authHeader.slice(7)
+    }
   }
 
-  const token = authHeader.slice(7)
+  if (!token) {
+    return c.json({ error: 'Missing or invalid authorization', code: 'UNAUTHORIZED' }, 401)
+  }
 
   try {
     const payload = verify(token, JWT_SECRET) as AuthPayload
     c.set('user', payload)
     await next()
   } catch {
-    c.status(401)
-    c.json({ error: 'Invalid or expired token', code: 'UNAUTHORIZED' })
+    return c.json({ error: 'Invalid or expired token', code: 'UNAUTHORIZED' }, 401)
   }
 }
 

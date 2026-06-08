@@ -186,20 +186,12 @@ function MessageBubble({
   }
 
   if (message.type === 'step_turn') {
-    const toolCalls = (message.data?.toolCalls || []) as Record<string, unknown>[]
     const summary = (message.data?.summary as string) || ''
     return (
       <div className="flex items-start gap-2">
         <AssistantAvatar />
         <div className="max-w-[80%] rounded-2xl rounded-bl-sm bg-storm-surface border border-storm-border px-4 py-3">
           <p className="text-sm text-storm-text font-medium mb-2">{message.text}</p>
-          {toolCalls.length > 0 && (
-            <div className="mb-2 space-y-0.5">
-              {toolCalls.map((tc, i) => (
-                <ToolCallItem key={i} data={tc} />
-              ))}
-            </div>
-          )}
           {summary && (
             <p className="text-sm text-storm-text/90 whitespace-pre-wrap leading-relaxed">{summary}</p>
           )}
@@ -209,20 +201,12 @@ function MessageBubble({
   }
 
   if (message.type === 'step_failure') {
-    const toolCalls = (message.data?.toolCalls || []) as Record<string, unknown>[]
     const steerOptions = message.data?.steerOptions as SteerOption[] | undefined
     return (
       <div className="flex items-start gap-2">
         <AssistantAvatar />
         <div className="max-w-[80%] rounded-2xl rounded-bl-sm bg-red-900/10 border border-red-800/30 px-4 py-3">
           <p className="text-sm text-storm-text font-medium mb-2">{message.text}</p>
-          {toolCalls.length > 0 && (
-            <div className="mb-2 space-y-0.5">
-              {toolCalls.map((tc, i) => (
-                <ToolCallItem key={i} data={tc} />
-              ))}
-            </div>
-          )}
           <p className="text-sm text-red-300 mb-2">This step failed. What would you like to do?</p>
           {steerOptions && (
             <InlineSteerButtons options={steerOptions} onSteer={onSteer} />
@@ -288,81 +272,4 @@ function InlineSteerButtons({
   )
 }
 
-/* ---------- Tool Call Item ---------- */
 
-function toolIcon(tool: string): string {
-  if (tool.startsWith('FileRead') || tool.startsWith('Read')) return '📖'
-  if (tool.startsWith('FileWrite') || tool.startsWith('Write') || tool.startsWith('Edit')) return '✏️'
-  if (tool.startsWith('Bash') || tool.startsWith('Shell') || tool.startsWith('Terminal')) return '💻'
-  if (tool.startsWith('Grep') || tool.startsWith('Search') || tool.startsWith('Find')) return '🔍'
-  if (tool.startsWith('FileDelete') || tool.startsWith('Delete')) return '🗑️'
-  if (tool.startsWith('List') || tool.startsWith('Glob')) return '📂'
-  return '⚙️'
-}
-
-function shortInput(input: Record<string, unknown>): string {
-  const val = input.command || input.path || input.file || input.pattern || input.query || ''
-  return typeof val === 'string' ? val.slice(0, 120) : ''
-}
-
-function inputLabel(input: Record<string, unknown>): string {
-  if (input.command) return 'command'
-  if (input.path) return 'path'
-  if (input.file) return 'file'
-  if (input.pattern) return 'pattern'
-  if (input.query) return 'query'
-  if (input.content !== undefined) return 'content'
-  return ''
-}
-
-function ToolCallItem({ data }: { data: Record<string, unknown> }) {
-  const [expanded, setExpanded] = useState(false)
-  const tool = (data.tool as string) || ''
-  const input = (data.input as Record<string, unknown>) || {}
-  const output = (data.output as string) || ''
-  const status = (data.status as string) || ''
-  const title = (data.title as string) || tool
-  const file = (data.file as string) || ''
-  const isError = status === 'error'
-
-  return (
-    <div
-      className={`rounded-lg px-2.5 py-1 text-xs border ${
-        isError
-          ? 'bg-red-900/10 border-red-800/20'
-          : 'bg-storm-bg/50 border-storm-border/40'
-      }`}
-    >
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-1.5 w-full text-left"
-      >
-        <span>{toolIcon(tool)}</span>
-        <span className="font-medium text-storm-text/80">{title}</span>
-        {file && <span className="font-mono text-storm-muted/70 truncate max-w-[200px]">{file}</span>}
-        {isError ? (
-          <span className="text-red-400 ml-auto">failed</span>
-        ) : (
-          <span className="text-green-400/70 ml-auto">done</span>
-        )}
-        <span className="text-storm-muted/50">{expanded ? '▲' : '▼'}</span>
-      </button>
-      {expanded && (
-        <div className="mt-1 space-y-1 border-t border-storm-border/30 pt-1">
-          {shortInput(input) && (
-            <div>
-              <span className="text-storm-muted/60">{inputLabel(input)}: </span>
-              <span className="text-storm-text/80">{shortInput(input)}</span>
-            </div>
-          )}
-          {output && (
-            <div>
-              <span className="text-storm-muted/60">result: </span>
-              <span className="text-storm-text/70 whitespace-pre-wrap">{output.slice(0, 300)}</span>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}

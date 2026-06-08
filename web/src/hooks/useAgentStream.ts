@@ -3,11 +3,18 @@ import * as api from '../lib/api'
 
 export type SteerOption = { label: string; action: string }
 
+export type AgentLogEntry = {
+  id: string
+  type: 'step_start' | 'tool_call' | 'file_edit' | 'step_complete' | 'error'
+  timestamp: number
+  data: Record<string, unknown>
+}
+
 export type ChatMessage = {
   id: string
   role: 'user' | 'assistant' | 'system'
   text: string
-  type: 'user_message' | 'plan_turn' | 'step_turn' | 'step_failure' | 'done' | 'error'
+  type: 'user_message' | 'plan_turn' | 'step_turn' | 'step_failure' | 'done' | 'error' | 'system'
   data?: {
     plan?: api.SubTask[]
     steerOptions?: SteerOption[]
@@ -28,6 +35,8 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
   const [currentStep, setCurrentStep] = useState(0)
   const [fileChangeCount, setFileChangeCount] = useState(0)
   const [totalSteps, setTotalSteps] = useState(0)
+  const [agentLogs, setAgentLogs] = useState<AgentLogEntry[]>([])
+  const [lastHtmlFile, setLastHtmlFile] = useState<string | null>(null)
   const disconnectRef = useRef<(() => void) | null>(null)
   const idCounter = useRef(0)
 
@@ -41,6 +50,47 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
     setMessages((prev) => [...prev, { ...msg, id }])
   }, [])
 
+  function fromServerMessage(msg: api.GoalMessage, id: string): ChatMessage {
+    const meta = msg.metadata || {}
+    let type: ChatMessage['type']
+    let data: ChatMessage['data'] | undefined
+
+    if (meta.plan) {
+      type = 'plan_turn'
+      data = { plan: meta.plan as api.SubTask[], steerOptions: meta.steerOptions as SteerOption[] | undefined }
+    } else if (meta.status) {
+      type = 'done'
+      data = { status: meta.status as string }
+    } else if (meta.success) {
+      type = 'step_turn'
+      data = {
+        step: meta.step as number,
+        description: meta.description as string,
+        success: meta.success as boolean,
+        summary: meta.summary as string,
+        toolCalls: meta.toolCalls as Record<string, unknown>[] | undefined,
+      }
+    } else if (meta.steerOptions && meta.step) {
+      type = 'step_failure'
+      data = {
+        step: meta.step as number,
+        description: meta.description as string,
+        steerOptions: meta.steerOptions as SteerOption[],
+      }
+    } else if (msg.role === 'user') {
+      type = 'user_message'
+      data = meta.action ? { action: meta.action as string } : undefined
+    } else if (msg.content.startsWith('❌')) {
+      type = 'error'
+      data = meta.message ? { message: meta.message as string } : undefined
+    } else {
+      type = 'system'
+      data = undefined
+    }
+
+    return { id, role: msg.role as ChatMessage['role'], text: msg.content, type, data, timestamp: msg.timestamp }
+  }
+
   useEffect(() => {
     if (!projectId || !goalId) return
 
@@ -48,27 +98,23 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
       disconnectRef.current()
     }
 
+    setMessages([])
+    setAgentLogs([])
+
+    // Load persisted messages from server
+    api.getGoalMessages(projectId, goalId).then((res) => {
+      if (disconnectRef.current === null) return // component unmounted
+      const mapped: ChatMessage[] = res.messages.map((msg) =>
+        fromServerMessage(msg, `msg-${++idCounter.current}`)
+      )
+      setMessages(mapped)
+    })
+
     // Fetch initial goal state
     api.getGoal(projectId, goalId).then((res) => {
       setGoalStatus(res.goal.status)
       setCurrentStep(res.goal.currentStep)
       setTotalSteps(res.goal.totalSteps)
-
-      if (res.goal.plan && res.goal.status === 'awaiting_approval') {
-        addMessage({
-          role: 'assistant',
-          text: `I've created a plan with ${res.goal.totalSteps} steps.`,
-          type: 'plan_turn',
-          data: {
-            plan: res.goal.plan,
-            steerOptions: [
-              { label: 'Approve', action: 'approve' },
-              { label: 'Regenerate plan', action: 'regenerate' },
-            ],
-          },
-          timestamp: Date.now(),
-        })
-      }
     })
 
     const disconnect = api.connectGoalStream(projectId, goalId, (event) => {
@@ -93,6 +139,10 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
           }
           toolCallBuffer.current = []
           setCurrentStep(event.data.step as number)
+          setAgentLogs((prev) => [
+            ...prev,
+            { id: `log-${++idCounter.current}`, type: 'step_start', timestamp: event.timestamp, data: event.data },
+          ])
           break
         }
         case 'step_progress': {
@@ -101,10 +151,22 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
         }
         case 'tool_call': {
           toolCallBuffer.current.push(event.data as Record<string, unknown>)
+          setAgentLogs((prev) => [
+            ...prev,
+            { id: `log-${++idCounter.current}`, type: 'tool_call', timestamp: event.timestamp, data: event.data },
+          ])
           break
         }
         case 'file_edit': {
-          // Triggers tree refresh; no message needed
+          const fp = (event.data.file as string) || (event.data.path as string) || ''
+          if (fp && /\.html?$/i.test(fp)) {
+            setLastHtmlFile(fp)
+          }
+          setFileChangeCount((c) => c + 1)
+          setAgentLogs((prev) => [
+            ...prev,
+            { id: `log-${++idCounter.current}`, type: 'file_edit', timestamp: event.timestamp, data: event.data },
+          ])
           break
         }
         case 'step_complete': {
@@ -114,6 +176,10 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
           const summary = event.data.summary as string
 
           setFileChangeCount((c) => c + 1)
+          setAgentLogs((prev) => [
+            ...prev,
+            { id: `log-${++idCounter.current}`, type: 'step_complete', timestamp: event.timestamp, data: event.data },
+          ])
 
           if (success) {
             const toolCalls = [...toolCallBuffer.current]
@@ -201,6 +267,10 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
           planBuffer.current = null
           toolCallBuffer.current = []
           stepBuffer.current = null
+          setAgentLogs((prev) => [
+            ...prev,
+            { id: `log-${++idCounter.current}`, type: 'error', timestamp: event.timestamp, data: event.data },
+          ])
           addMessage({
             role: 'system',
             text: `❌ Error: ${event.data.message as string}`,
@@ -283,5 +353,8 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
     totalSteps,
     steer,
     fileChangeCount,
+    addMessage,
+    agentLogs,
+    lastHtmlFile,
   }
 }
