@@ -69,6 +69,7 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
         case 'plan_ready': {
           const plan = event.data.plan as Array<{ step: number; description: string; files: string[] }>
           const total = event.data.totalSteps as number
+          setGoalStatus('awaiting_approval')
           setTotalSteps(total)
           addMessage({
             role: 'assistant',
