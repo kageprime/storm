@@ -5,6 +5,7 @@ import { initDb, closeDb } from './db/index.js'
 import authRoutes from './auth/routes.js'
 import projectsRoutes from './routes/projects.js'
 import goalsRoutes from './routes/goals.js'
+import filesRoutes from './routes/files.js'
 
 const app = new Hono()
 
@@ -19,6 +20,7 @@ app.get('/api/health', (c) => c.json({ healthy: true, version: '0.1.0' }))
 app.route('/api/auth', authRoutes)
 app.route('/api/projects', projectsRoutes)
 app.route('/api/projects', goalsRoutes)
+app.route('/api/projects', filesRoutes)
 
 const PORT = parseInt(process.env.PORT || '3000', 10)
 const HOST = process.env.HOST || '0.0.0.0'

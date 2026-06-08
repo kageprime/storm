@@ -6,23 +6,27 @@ import { SteeringButtons } from './SteeringButtons'
 type Props = {
   messages: ChatMessage[]
   pendingSteer: { prompt: string; options: Array<{ label: string; action: string }> } | null
-  onSteer: (action: string) => void
+  failureSteer: { prompt: string; options: Array<{ label: string; action: string }> } | null
+  onSteer: (action: string, payload?: Record<string, unknown>) => void
   goalStatus: string | null
   currentStep: number
   totalSteps: number
 }
 
-export function ChatStream({ messages, pendingSteer, onSteer, goalStatus, currentStep, totalSteps }: Props) {
+export function ChatStream({ messages, pendingSteer, failureSteer, onSteer, goalStatus, currentStep, totalSteps }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  const isExecuting = goalStatus === 'executing'
+  const isPlanning = goalStatus === 'planning'
+
   return (
     <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
-      {/* Progress bar when executing */}
-      {goalStatus === 'executing' && totalSteps > 0 && (
+      {/* Progress bar during execution */}
+      {isExecuting && totalSteps > 0 && (
         <div className="sticky top-0 bg-storm-bg/95 backdrop-blur pb-3 z-10">
           <div className="flex items-center justify-between text-xs text-storm-muted mb-1">
             <span>
@@ -39,11 +43,23 @@ export function ChatStream({ messages, pendingSteer, onSteer, goalStatus, curren
         </div>
       )}
 
+      {/* Stop button during execution */}
+      {isExecuting && (
+        <div className="flex justify-center">
+          <button
+            onClick={() => onSteer('stop')}
+            className="px-3 py-1 text-xs text-red-400 border border-red-800/40 rounded-full hover:bg-red-900/20 transition-colors"
+          >
+            Stop execution
+          </button>
+        </div>
+      )}
+
       {messages.length === 0 && (
         <div className="text-center text-storm-muted py-12">
           <p className="text-lg mb-2">Submit a goal to get started</p>
           <p className="text-sm">
-            The agent will create a plan, execute it step by step, and ask for your input when needed.
+            The agent will create a plan, then execute step by step autonomously after you approve.
           </p>
         </div>
       )}
@@ -52,8 +68,8 @@ export function ChatStream({ messages, pendingSteer, onSteer, goalStatus, curren
         <MessageBubble key={msg.id} message={msg} currentStep={currentStep} />
       ))}
 
-      {/* Loading indicator */}
-      {goalStatus === 'planning' && (
+      {/* Loading dots */}
+      {isPlanning && (
         <div className="flex items-center gap-2 text-storm-muted text-sm py-2">
           <span>Planning</span>
           <span className="loading-dot">.</span>
@@ -61,22 +77,32 @@ export function ChatStream({ messages, pendingSteer, onSteer, goalStatus, curren
           <span className="loading-dot">.</span>
         </div>
       )}
-      {goalStatus === 'executing' && currentStep === 0 && (
+      {isExecuting && (
         <div className="flex items-center gap-2 text-storm-muted text-sm py-2">
-          <span>Executing</span>
+          <span>Working</span>
           <span className="loading-dot">.</span>
           <span className="loading-dot">.</span>
           <span className="loading-dot">.</span>
         </div>
       )}
 
-      {/* Steering buttons */}
+      {/* Plan approval buttons */}
       {pendingSteer && (
         <div className="py-2">
           <SteeringButtons
             options={pendingSteer.options}
-            onSteer={onSteer}
-            disabled={goalStatus === 'planning' || goalStatus === 'executing'}
+            onSteer={(action) => onSteer(action)}
+            disabled={isPlanning || isExecuting}
+          />
+        </div>
+      )}
+
+      {/* Failure steering buttons */}
+      {failureSteer && (
+        <div className="py-2">
+          <SteeringButtons
+            options={failureSteer.options}
+            onSteer={(action) => onSteer(action)}
           />
         </div>
       )}

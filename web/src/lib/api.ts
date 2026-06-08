@@ -141,10 +141,31 @@ export function steerGoal(
   )
 }
 
+// --- Files ---
+
+export type FileNode = {
+  name: string
+  path: string
+  type: 'file' | 'dir'
+  size?: number
+  children?: FileNode[]
+}
+
+export function listFiles(projectId: string) {
+  return request<{ files: FileNode[] }>('GET', `/projects/${projectId}/files`)
+}
+
+export function getFileContent(projectId: string, filePath: string): Promise<Response> {
+  const token = getToken()
+  return fetch(`${BASE}/projects/${projectId}/files/${filePath}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+}
+
 // --- SSE ---
 
 export type GoalEvent = {
-  type: 'status_change' | 'plan_ready' | 'step_start' | 'step_progress' | 'step_complete' | 'steering_needed' | 'error' | 'done'
+  type: 'status_change' | 'plan_ready' | 'step_start' | 'step_progress' | 'step_complete' | 'steering_needed' | 'user_message' | 'error' | 'done'
   goalId: string
   projectId: string
   data: Record<string, unknown>

@@ -5,7 +5,7 @@ export type ChatMessage = {
   id: string
   role: 'user' | 'assistant' | 'system'
   text: string
-  type: 'text' | 'plan' | 'steer_options' | 'step_progress' | 'step_complete' | 'error' | 'done'
+  type: 'text' | 'plan' | 'user_message' | 'steer_options' | 'step_progress' | 'step_complete' | 'error' | 'done'
   data?: Record<string, unknown>
   timestamp: number
 }
@@ -16,6 +16,10 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
   const [currentStep, setCurrentStep] = useState(0)
   const [totalSteps, setTotalSteps] = useState(0)
   const [pendingSteer, setPendingSteer] = useState<{
+    prompt: string
+    options: Array<{ label: string; action: string }>
+  } | null>(null)
+  const [failureSteer, setFailureSteer] = useState<{
     prompt: string
     options: Array<{ label: string; action: string }>
   } | null>(null)
@@ -30,7 +34,6 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
   useEffect(() => {
     if (!projectId || !goalId) return
 
-    // Cleanup previous connection
     if (disconnectRef.current) {
       disconnectRef.current()
     }
@@ -42,6 +45,13 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
       setTotalSteps(res.goal.totalSteps)
 
       if (res.goal.plan && res.goal.status === 'awaiting_approval') {
+        setPendingSteer({
+          prompt: 'Here is my plan. Shall I proceed?',
+          options: [
+            { label: 'Approve', action: 'approve' },
+            { label: 'Regenerate plan', action: 'regenerate' },
+          ],
+        })
         addMessage({
           role: 'assistant',
           text: `I've created a plan with ${res.goal.totalSteps} steps. Review and approve to start execution.`,
@@ -52,15 +62,13 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
       }
     })
 
-    // Connect to SSE
     const disconnect = api.connectGoalStream(projectId, goalId, (event) => {
       switch (event.type) {
         case 'status_change': {
-          const status = event.data.status as string
-          setGoalStatus(status)
+          setGoalStatus(event.data.status as string)
           addMessage({
             role: 'system',
-            text: (event.data.message as string) || `Status: ${status}`,
+            text: (event.data.message as string) || `Status: ${event.data.status as string}`,
             type: 'text',
             timestamp: event.timestamp,
           })
@@ -71,9 +79,16 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
           const total = event.data.totalSteps as number
           setGoalStatus('awaiting_approval')
           setTotalSteps(total)
+          setPendingSteer({
+            prompt: 'Here is my plan. Shall I proceed?',
+            options: [
+              { label: 'Approve', action: 'approve' },
+              { label: 'Regenerate plan', action: 'regenerate' },
+            ],
+          })
           addMessage({
             role: 'assistant',
-            text: `I've created a plan with ${total} steps.`,
+            text: `I've created a plan with ${total} steps. Review and approve to start execution.`,
             type: 'plan',
             data: { plan },
             timestamp: event.timestamp,
@@ -81,11 +96,12 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
           break
         }
         case 'step_start': {
-          const stepNum = event.data.step as number
-          setCurrentStep(stepNum)
+          setPendingSteer(null)
+          setFailureSteer(null)
+          setCurrentStep(event.data.step as number)
           addMessage({
             role: 'assistant',
-            text: `**Step ${stepNum}:** ${event.data.description as string}`,
+            text: `**Step ${event.data.step as number}:** ${event.data.description as string}`,
             type: 'text',
             data: { files: event.data.files as string[] },
             timestamp: event.timestamp,
@@ -113,21 +129,34 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
           break
         }
         case 'steering_needed': {
-          setPendingSteer({
-            prompt: event.data.prompt as string,
-            options: event.data.options as Array<{ label: string; action: string }>,
-          })
+          const options = event.data.options as Array<{ label: string; action: string }>
+          if (options.some((o) => o.action === 'approve')) {
+            setPendingSteer({ prompt: event.data.prompt as string, options })
+          } else {
+            setFailureSteer({ prompt: event.data.prompt as string, options })
+          }
           addMessage({
             role: 'assistant',
             text: event.data.prompt as string,
             type: 'steer_options',
-            data: { options: event.data.options },
+            data: { options },
+            timestamp: event.timestamp,
+          })
+          break
+        }
+        case 'user_message': {
+          addMessage({
+            role: 'system',
+            text: `✉️ ${event.data.text as string}`,
+            type: 'user_message',
             timestamp: event.timestamp,
           })
           break
         }
         case 'error': {
           setGoalStatus('failed')
+          setPendingSteer(null)
+          setFailureSteer(null)
           addMessage({
             role: 'system',
             text: `❌ Error: ${event.data.message as string}`,
@@ -139,6 +168,8 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
         case 'done': {
           const status = event.data.status as string
           setGoalStatus(status)
+          setPendingSteer(null)
+          setFailureSteer(null)
           addMessage({
             role: 'system',
             text: `🏁 ${event.data.message as string}`,
@@ -146,7 +177,6 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
             data: { status },
             timestamp: event.timestamp,
           })
-          setPendingSteer(null)
           break
         }
       }
@@ -161,17 +191,53 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
   }, [projectId, goalId, addMessage])
 
   const steer = useCallback(
-    async (action: string) => {
+    async (action: string, payload?: Record<string, unknown>) => {
       if (!projectId || !goalId) return
-      setPendingSteer(null)
-      addMessage({
-        role: 'user',
-        text: action === 'approve' ? 'Approved — proceed with the plan.' : `Action: ${action}`,
-        type: 'text',
-        timestamp: Date.now(),
-      })
+
+      if (action === 'message') {
+        addMessage({
+          role: 'user',
+          text: (payload?.text as string) || '',
+          type: 'user_message',
+          timestamp: Date.now(),
+        })
+      } else if (action === 'approve') {
+        setPendingSteer(null)
+        addMessage({
+          role: 'user',
+          text: 'Approved — proceed with the plan.',
+          type: 'text',
+          timestamp: Date.now(),
+        })
+      } else if (action === 'regenerate') {
+        setPendingSteer(null)
+        addMessage({
+          role: 'user',
+          text: 'Regenerate the plan.',
+          type: 'text',
+          timestamp: Date.now(),
+        })
+      } else if (action === 'stop') {
+        setPendingSteer(null)
+        setFailureSteer(null)
+        addMessage({
+          role: 'user',
+          text: 'Stop execution.',
+          type: 'text',
+          timestamp: Date.now(),
+        })
+      } else {
+        setFailureSteer(null)
+        addMessage({
+          role: 'user',
+          text: `Action: ${action}`,
+          type: 'text',
+          timestamp: Date.now(),
+        })
+      }
+
       try {
-        await api.steerGoal(projectId, goalId, action)
+        await api.steerGoal(projectId, goalId, action, payload)
       } catch (err) {
         addMessage({
           role: 'system',
@@ -190,6 +256,7 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
     currentStep,
     totalSteps,
     pendingSteer,
+    failureSteer,
     steer,
   }
 }
