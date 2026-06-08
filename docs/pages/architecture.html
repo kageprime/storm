@@ -112,7 +112,42 @@
           <h3>Why Files API?</h3>
           <p>Backend serves recursive file trees (skipping .git/node_modules) and file content (text or base64). Frontend renders HTML in sandboxed iframes, images inline, and code in pre blocks.</p>
         </div>
+        <div class="card">
+          <h3>Why Dev Server Proxy?</h3>
+          <p>Projects with <code>package.json</code> get an auto-started <code>npm run dev</code> process. Preview requests proxy through the backend at <code>/api/preview/:projectId</code> with HTML path rewriting (<code>/assets/*</code> → <code>/api/preview/:projectId/assets/*</code>) so frameworks like Vite work seamlessly.</p>
+        </div>
+        <div class="card">
+          <h3>Why authMiddleware Fix?</h3>
+          <p>Missing <code>return</code> before <code>c.json()</code> left the Hono context unfinalized, causing "Context is not finalized" errors. All middleware now returns responses correctly.</p>
+        </div>
       </div>
+
+      <h3>Preview Flow</h3>
+      <pre class="mermaid">
+        graph TD
+          PT["PreviewTab (iframe)"]
+          PR["/api/preview/:projectId/:path"]
+          DS["DevServerManager<br/>spawn npm run dev"]
+          SF["Static file<br/>sandbox/:path"]
+          DS2{"Has package.json<br/>+ dev/start script?"}
+          OK{"Dev server<br/>running?"}
+          HTML{"Response is<br/>text/html?"}
+          RW["Rewrite absolute paths<br/>/assets/* → /api/preview/:id/assets/*"]
+          DB["SQLite lookup<br/>sandbox_path"]
+
+          PT --> PR
+          PR --> DB
+          DB --> DS2
+          DS2 -->|"no"| SF
+          DS2 -->|"yes"| OK
+          OK -->|"no"| DS
+          OK -->|"yes"| HTML
+          DS -->|"npm install + npm run dev"| OK
+          HTML -->|"yes"| RW
+          RW --> PT
+          HTML -->|"no (js, css, img...)"| PT
+          SF --> PT
+      </pre>
     </div>
   </section>
 

@@ -224,8 +224,34 @@ Authorization: Bearer &lt;token&gt;
 200 Response (text):
 { "content": "console.log('hello')\n", "encoding": "utf8" }
 
-200 Response (binary):
+      200 Response (binary):
 { "content": "iVBORw0KGgo...", "encoding": "base64" }</pre>
+
+      <h3>Preview (Public — No Auth)</h3>
+      <p style="color: var(--storm-text-muted); margin-bottom: 1rem;">Static files from sandbox or proxied dev server. No auth required — project UUIDs serve as unguessable access keys.</p>
+      <table>
+        <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>GET</code></td><td><code>/api/preview/:projectId</code></td><td>Auto-detect index.html or dev server root</td></tr>
+          <tr><td><code>GET</code></td><td><code>/api/preview/:projectId/*</code></td><td>Serve specific file (static or proxied)</td></tr>
+        </tbody>
+      </table>
+
+      <p style="margin-top: 1rem;">If the project has a <code>package.json</code> with a <code>dev</code> or <code>start</code> script, the backend auto-starts <code>npm install && npm run dev</code> and proxies requests. HTML responses have absolute paths rewritten (<code>/assets/*</code> → <code>/api/preview/:projectId/assets/*</code>) so framework assets resolve correctly.</p>
+
+      <h3>Dev Server (Authenticated)</h3>
+      <table>
+        <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>POST</code></td><td><code>/api/dev-server/:projectId/start</code></td><td>Start dev server manually</td></tr>
+          <tr><td><code>POST</code></td><td><code>/api/dev-server/:projectId/stop</code></td><td>Stop dev server</td></tr>
+        </tbody>
+      </table>
+      <pre>POST /api/dev-server/:projectId/start
+Authorization: Bearer &lt;token&gt;
+
+200 Response:
+{ "url": "/api/preview/:projectId/", "port": 5000 }</pre>
     </div>
   </section>
 

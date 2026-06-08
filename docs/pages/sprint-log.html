@@ -204,7 +204,7 @@
         </tbody>
       </table>
 
-      <h3>Sprint 5 — Documentation <span class="badge badge-progress">In Progress</span></h3>
+      <h3>Sprint 5 — Documentation <span class="badge badge-done">Done</span></h3>
       <p style="margin-bottom: 1.5rem; color: var(--storm-text-muted);">
         Goal: Full docs site — architecture, API reference, deployment guide, sprint log.
       </p>
@@ -238,15 +238,67 @@
             <td><span class="badge badge-done">Done</span></td>
             <td>All sprints tracked with task/status/notes</td>
           </tr>
+        </tbody>
+      </table>
+
+      <h3>Sprint 6 — Preview & Polish <span class="badge badge-done">Done</span></h3>
+      <p style="margin-bottom: 1.5rem; color: var(--storm-text-muted);">
+        Goal: Fix preview routing, add dev server auto-start with proxy, fullscreen preview, message persistence on reconnect, and various bug fixes.
+      </p>
+      <table>
+        <thead>
+          <tr><th>Task</th><th>Status</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
           <tr>
-            <td>Keep docs in sync with code</td>
-            <td><span class="badge badge-progress">Active</span></td>
-            <td>Update as features evolve</td>
+            <td>Preview route fix</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Moved to /api/preview/:id/:path to avoid sub-router conflict</td>
+          </tr>
+          <tr>
+            <td>Dev server auto-start + proxy</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>npm install + npm run dev per project, HTML path rewriting for asset resolution</td>
+          </tr>
+          <tr>
+            <td>Fullscreen preview toggle</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>requestFullscreen/exitFullscreen via PreviewFrame component</td>
+          </tr>
+          <tr>
+            <td>iframe sandbox fix</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>allow-same-origin added to resolve CORS with localhost:5173</td>
+          </tr>
+          <tr>
+            <td>Code tab shows HTML source (not srcdoc)</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Preview tab uses server route; Code tab shows raw source</td>
+          </tr>
+          <tr>
+            <td>Message persistence on reconnect</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>useAgentStream loads past messages via getGoalMessages(), goalId in URL params</td>
+          </tr>
+          <tr>
+            <td>Auth middleware fix</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Missing return before c.json() caused Context not finalized errors</td>
+          </tr>
+          <tr>
+            <td>Sub-router middleware leakage fix</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Per-route authMiddleware instead of router-level use(*)</td>
+          </tr>
+          <tr>
+            <td>E2E test script</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>e2e-test.mjs with multi-scenario smoke test</td>
           </tr>
         </tbody>
       </table>
 
-      <h3>Sprint 6 — Deployment <span class="badge badge-pending">Pending</span></h3>
+      <h3>Sprint 7 — Deployment <span class="badge badge-pending">Pending</span></h3>
       <p style="margin-bottom: 1rem; color: var(--storm-text-muted);">
         Plan: Docker Compose setup, DigitalOcean provisioning, domain configuration, CI/CD.
       </p>
