@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API — Storm</title>
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+  <nav>
+    <div class="container">
+      <a href="../index.html" class="logo">Storm<span>.</span></a>
+      <ul class="nav-links">
+        <li><a href="../index.html">Home</a></li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="api.html">API</a></li>
+        <li><a href="deployment.html">Deployment</a></li>
+        <li><a href="sprint-log.html">Sprint Log</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <section>
+    <div class="container">
+      <h2>API Reference</h2>
+      <p class="subtitle">REST API endpoints for the Storm backend</p>
+
+      <h3>Health</h3>
+      <table>
+        <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>GET</code></td><td><code>/api/health</code></td><td>Server health check</td></tr>
+        </tbody>
+      </table>
+      <pre>{
+  "healthy": true,
+  "version": "0.1.0"
+}</pre>
+
+      <h3>Auth</h3>
+      <table>
+        <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>POST</code></td><td><code>/api/auth/register</code></td><td>Create a new account</td></tr>
+          <tr><td><code>POST</code></td><td><code>/api/auth/login</code></td><td>Login and get JWT token</td></tr>
+        </tbody>
+      </table>
+
+      <h4>Register</h4>
+      <pre>POST /api/auth/register
+{
+  "email": "user@example.com",
+  "password": "securepassword"
+}
+
+201 Response:
+{
+  "token": "eyJhbGciOiJIUzI1NiIs...",
+  "user": { "id": "uuid", "email": "user@example.com" }
+}</pre>
+
+      <h4>Login</h4>
+      <pre>POST /api/auth/login
+{
+  "email": "user@example.com",
+  "password": "securepassword"
+}
+
+200 Response:
+{
+  "token": "eyJhbGciOiJIUzI1NiIs...",
+  "user": { "id": "uuid", "email": "user@example.com" }
+}</pre>
+
+      <h3>Projects (Authenticated)</h3>
+      <p style="color: var(--storm-text-muted); margin-bottom: 1rem;">All project endpoints require <code>Authorization: Bearer &lt;token&gt;</code> header.</p>
+      <table>
+        <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>GET</code></td><td><code>/api/projects</code></td><td>List user's projects</td></tr>
+          <tr><td><code>POST</code></td><td><code>/api/projects</code></td><td>Create a new project</td></tr>
+          <tr><td><code>GET</code></td><td><code>/api/projects/:id</code></td><td>Get project details</td></tr>
+          <tr><td><code>DELETE</code></td><td><code>/api/projects/:id</code></td><td>Delete a project</td></tr>
+        </tbody>
+      </table>
+
+      <h4>Create Project</h4>
+      <pre>POST /api/projects
+Authorization: Bearer &lt;token&gt;
+{
+  "name": "My API",
+  "gitUrl": "https://github.com/user/repo.git"  // optional
+}
+
+201 Response:
+{
+  "project": {
+    "id": "uuid",
+    "name": "My API",
+    "gitUrl": null,
+    "status": "ready",
+    "sandboxPath": "/path/to/sandbox",
+    "createdAt": "2026-06-08T00:00:00.000Z",
+    "updatedAt": "2026-06-08T00:00:00.000Z"
+  }
+}</pre>
+
+      <h4>List Projects</h4>
+      <pre>GET /api/projects
+Authorization: Bearer &lt;token&gt;
+
+200 Response:
+{
+  "projects": [
+    {
+      "id": "uuid",
+      "name": "My API",
+      "gitUrl": null,
+      "status": "ready",
+      "createdAt": "2026-06-08 00:00:00",
+      "updatedAt": "2026-06-08 00:00:00"
+    }
+  ]
+}</pre>
+    </div>
+  </section>
+
+  <footer>
+    <div class="container">
+      <p>Storm — API Reference</p>
+    </div>
+  </footer>
+</body>
+</html>

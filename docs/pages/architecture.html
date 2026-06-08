@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Architecture — Storm</title>
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+  <nav>
+    <div class="container">
+      <a href="../index.html" class="logo">Storm<span>.</span></a>
+      <ul class="nav-links">
+        <li><a href="../index.html">Home</a></li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="api.html">API</a></li>
+        <li><a href="deployment.html">Deployment</a></li>
+        <li><a href="sprint-log.html">Sprint Log</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <section>
+    <div class="container">
+      <h2>Architecture</h2>
+      <p class="subtitle">System architecture and data flow</p>
+
+      <h3>High-Level Architecture</h3>
+      <div class="diagram">
+Browser (React + Tailwind)
+       |
+       | HTTP + SSE
+       v
+  Hono Backend (Node.js)
+       |
+       | @opencode-ai/sdk
+       v
+  opencode server (embedded)
+       |
+       | opencode/deepseek-v4-flash-free
+       v
+  Free DeepSeek Model
+       |
+  +----+----+
+  |         |
+  SQLite   Sandbox Directory
+  (users,  (1 per project,
+   goals)   git repo or empty)</div>
+
+      <h3>Agent Loop Flow</h3>
+      <div class="diagram">
+User: "Build a REST API for a todo app"
+       |
+       v
+[Goal submitted] --> POST /api/projects/:id/goals
+       |
+       v
+[Planner] --> Send goal to opencode with json_schema format
+       |       Returns structured sub-tasks:
+       |       [{id, description, files, depends_on}, ...]
+       |
+       v
+[User approves plan] <-- Steering point #1 (buttons + chat)
+       |
+       v
+[For each sub-task]:
+    |--- Send sub-task to opencode via session.prompt()
+    |--- Stream progress via SSE (tool calls, file diffs)
+    |--- User sees real-time updates in browser
+    +--- On completion: Steering point #2 (continue/redo/stop)
+       |
+       v
+[Goal complete] --> Summary to user</div>
+
+      <h3>Key Design Decisions</h3>
+      <div class="grid grid-2" style="margin-top: 1.5rem;">
+        <div class="card">
+          <h3>Why Hono?</h3>
+          <p>Lightweight, fast, TypeScript-native. Same runtime as opencode (Node.js). Built-in CORS, middleware, and excellent developer experience.</p>
+        </div>
+        <div class="card">
+          <h3>Why sql.js?</h3>
+          <p>Pure JavaScript SQLite — no native compilation needed. Zero-config database that persists to a single file. Perfect for single-server deployment.</p>
+        </div>
+        <div class="card">
+          <h3>Why SDK over CLI?</h3>
+          <p>The @opencode-ai/sdk provides programmatic control over opencode — create sessions, send prompts, stream events — without shelling out to a subprocess.</p>
+        </div>
+        <div class="card">
+          <h3>Why SSE over WebSocket?</h3>
+          <p>SSE is simpler, native in browsers (EventSource), works through proxies, and is a natural fit for the unidirectional streaming our agent loop needs.</p>
+        </div>
+        <div class="card">
+          <h3>Why Sandboxed Directories?</h3>
+          <p>Each project gets an isolated filesystem. opencode operates only within that directory. MVP uses simple dirs; Docker containers planned for production isolation.</p>
+        </div>
+        <div class="card">
+          <h3>Why Free DeepSeek?</h3>
+          <p>opencode/deepseek-v4-flash-free is built into opencode — no API key, no costs, no rate limits. Powers the entire agent loop at zero operational expense.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="container">
+      <p>Storm — Architecture</p>
+    </div>
+  </footer>
+</body>
+</html>

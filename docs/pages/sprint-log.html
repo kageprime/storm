@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sprint Log — Storm</title>
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+  <nav>
+    <div class="container">
+      <a href="../index.html" class="logo">Storm<span>.</span></a>
+      <ul class="nav-links">
+        <li><a href="../index.html">Home</a></li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="api.html">API</a></li>
+        <li><a href="deployment.html">Deployment</a></li>
+        <li><a href="sprint-log.html">Sprint Log</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <section>
+    <div class="container">
+      <h2>Sprint Log</h2>
+      <p class="subtitle">Tracking progress across all development sprints</p>
+
+      <h3>Sprint 1 — Backend Foundation <span class="badge badge-progress">In Progress</span></h3>
+      <p style="margin-bottom: 1.5rem; color: var(--storm-text-muted);">
+        Goal: Scaffold the Hono server, SQLite database, auth system, project CRUD, and sandbox management.
+      </p>
+      <table>
+        <thead>
+          <tr><th>Task</th><th>Status</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>AGENTS.md with project context</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Project conventions, structure, and tech stack documented</td>
+          </tr>
+          <tr>
+            <td>Server scaffold (package.json, tsconfig, Hono entry)</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Hono 4.x, tsx for dev, full ESM setup</td>
+          </tr>
+          <tr>
+            <td>SQLite schema + migration (users, projects, goals)</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>sql.js with auto-migrate + file persistence</td>
+          </tr>
+          <tr>
+            <td>Auth (register/login + JWT middleware)</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>bcryptjs password hashing, JWT with 7-day expiry</td>
+          </tr>
+          <tr>
+            <td>Project CRUD (create, list, get, delete)</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>All endpoints tested via curl</td>
+          </tr>
+          <tr>
+            <td>Sandbox manager (dirs + git clone)</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Creates isolated dir per project, git init or clone</td>
+          </tr>
+          <tr>
+            <td>Docs HTML scaffolding</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Tailwind CSS via CDN, landing page + sprint log created</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>Sprint 2 — Agent Loop <span class="badge badge-progress">In Progress</span></h3>
+      <p style="margin-bottom: 1.5rem; color: var(--storm-text-muted);">
+        Goal: Build the planner, executor, orchestrator, and goal routes with SSE streaming.
+      </p>
+      <table>
+        <thead>
+          <tr><th>Task</th><th>Status</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>OpenCode manager (server lifecycle per sandbox)</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>createOpencode() with port 0 for dynamic port allocation</td>
+          </tr>
+          <tr>
+            <td>Planner (structured goal decomposition)</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Uses opencode prompt with JSON output instruction</td>
+          </tr>
+          <tr>
+            <td>Executor (step-by-step task execution)</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Creates files, streams events, returns summary</td>
+          </tr>
+          <tr>
+            <td>Orchestrator (full lifecycle management)</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>plan → steer → execute → steer → complete loop</td>
+          </tr>
+          <tr>
+            <td>Goal routes (POST, SSE stream, steer)</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>/goals, /goals/:id/stream (SSE), /steer</td>
+          </tr>
+          <tr>
+            <td>End-to-end flow verified</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Goal → Plan → Await approval → Execute → Complete</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>Sprint 3 — Frontend <span class="badge badge-pending">Pending</span></h3>
+      <p style="margin-bottom: 1rem; color: var(--storm-text-muted);">
+        Plan: React app scaffold, login, dashboard, project view, SSE integration, steering UI.
+      </p>
+
+      <h3>Sprint 4 — Real-time Polish <span class="badge badge-pending">Pending</span></h3>
+      <p style="margin-bottom: 1rem; color: var(--storm-text-muted);">
+        Plan: Live diff viewer, tool call display, progress bars, error handling.
+      </p>
+
+      <h3>Sprint 5 — Documentation <span class="badge badge-pending">Pending</span></h3>
+      <p style="margin-bottom: 1rem; color: var(--storm-text-muted);">
+        Plan: Full docs site — architecture, API reference, deployment guide.
+      </p>
+
+      <h3>Sprint 6 — Deployment <span class="badge badge-pending">Pending</span></h3>
+      <p style="margin-bottom: 1rem; color: var(--storm-text-muted);">
+        Plan: Docker + Caddy setup, DigitalOcean provisioning, CI/CD.
+      </p>
+    </div>
+  </section>
+
+  <footer>
+    <div class="container">
+      <p>Storm — Sprint Log</p>
+    </div>
+  </footer>
+</body>
+</html>

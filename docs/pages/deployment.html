@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Deployment — Storm</title>
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+  <nav>
+    <div class="container">
+      <a href="../index.html" class="logo">Storm<span>.</span></a>
+      <ul class="nav-links">
+        <li><a href="../index.html">Home</a></li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="api.html">API</a></li>
+        <li><a href="deployment.html">Deployment</a></li>
+        <li><a href="sprint-log.html">Sprint Log</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <section>
+    <div class="container">
+      <h2>Deployment</h2>
+      <p class="subtitle">Deploying Storm on DigitalOcean</p>
+
+      <h3>Prerequisites</h3>
+      <ul style="margin-bottom: 2rem; color: var(--storm-text-muted); line-height: 2;">
+        <li>DigitalOcean Droplet (4GB RAM, 2 vCPUs, Ubuntu 24.04)</li>
+        <li>Domain name pointed to droplet IP</li>
+        <li>Docker and Docker Compose installed on droplet</li>
+      </ul>
+
+      <h3>Production Architecture</h3>
+      <div class="diagram">
+                         Internet
+                            |
+                            v
+  +----------------------------+
+  |  Caddy (reverse proxy)     |
+  |  :443 (HTTPS) + :80 (redirect) |
+  |  Auto TLS via Let's Encrypt |
+  +------------+---------------+
+               |
+               v
+  +----------------------------+
+  |  storm-server (Docker)     |
+  |  :3000 (internal)          |
+  |                            |
+  |  +----------------------+ |
+  |  | Hono + opencode SDK  | |
+  |  +----------------------+ |
+  |  +----------------------+ |
+  |  | SQLite (volume)      | |
+  |  +----------------------+ |
+  +----------------------------+
+               |
+               v
+  +----------------------------+
+  |  Sandbox directories       |
+  |  /data/sandboxes/          |
+  |  (Docker volume)           |
+  +----------------------------+</div>
+
+      <h3>Quick Start</h3>
+      <pre># Clone the repo on the droplet
+git clone https://github.com/your-org/storm /opt/storm
+cd /opt/storm
+
+# Create required directories
+mkdir -p data/sandboxes
+
+# Build and start
+docker compose up -d
+
+# Check logs
+docker compose logs -f</pre>
+
+      <h3>Environment Variables</h3>
+      <table>
+        <thead><tr><th>Variable</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>PORT</code></td><td><code>3000</code></td><td>Internal server port</td></tr>
+          <tr><td><code>HOST</code></td><td><code>0.0.0.0</code></td><td>Bind address</td></tr>
+          <tr><td><code>JWT_SECRET</code></td><td><em>required in prod</em></td><td>Secret for signing JWT tokens</td></tr>
+          <tr><td><code>SANDBOX_ROOT</code></td><td><code>./sandboxes</code></td><td>Directory for sandboxed projects</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <div class="container">
+      <p>Storm — Deployment Guide</p>
+    </div>
+  </footer>
+</body>
+</html>
