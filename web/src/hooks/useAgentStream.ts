@@ -1,12 +1,24 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import * as api from '../lib/api'
 
+export type SteerOption = { label: string; action: string }
+
 export type ChatMessage = {
   id: string
   role: 'user' | 'assistant' | 'system'
   text: string
-  type: 'text' | 'plan' | 'user_message' | 'steer_options' | 'step_progress' | 'step_complete' | 'tool_call' | 'error' | 'done'
-  data?: Record<string, unknown>
+  type: 'user_message' | 'plan_turn' | 'step_turn' | 'step_failure' | 'done' | 'error'
+  data?: {
+    plan?: api.SubTask[]
+    steerOptions?: SteerOption[]
+    toolCalls?: Record<string, unknown>[]
+    step?: number
+    description?: string
+    success?: boolean
+    summary?: string
+    status?: string
+    [key: string]: unknown
+  }
   timestamp: number
 }
 
@@ -16,16 +28,13 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
   const [currentStep, setCurrentStep] = useState(0)
   const [fileChangeCount, setFileChangeCount] = useState(0)
   const [totalSteps, setTotalSteps] = useState(0)
-  const [pendingSteer, setPendingSteer] = useState<{
-    prompt: string
-    options: Array<{ label: string; action: string }>
-  } | null>(null)
-  const [failureSteer, setFailureSteer] = useState<{
-    prompt: string
-    options: Array<{ label: string; action: string }>
-  } | null>(null)
   const disconnectRef = useRef<(() => void) | null>(null)
   const idCounter = useRef(0)
+
+  // Buffers for grouping events into turns
+  const planBuffer = useRef<api.SubTask[] | null>(null)
+  const toolCallBuffer = useRef<Record<string, unknown>[]>([])
+  const stepBuffer = useRef<{ step: number; description: string } | null>(null)
 
   const addMessage = useCallback((msg: Omit<ChatMessage, 'id'>) => {
     const id = `msg-${++idCounter.current}`
@@ -46,18 +55,17 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
       setTotalSteps(res.goal.totalSteps)
 
       if (res.goal.plan && res.goal.status === 'awaiting_approval') {
-        setPendingSteer({
-          prompt: 'Here is my plan. Shall I proceed?',
-          options: [
-            { label: 'Approve', action: 'approve' },
-            { label: 'Regenerate plan', action: 'regenerate' },
-          ],
-        })
         addMessage({
           role: 'assistant',
-          text: `I've created a plan with ${res.goal.totalSteps} steps. Review and approve to start execution.`,
-          type: 'plan',
-          data: { plan: res.goal.plan },
+          text: `I've created a plan with ${res.goal.totalSteps} steps.`,
+          type: 'plan_turn',
+          data: {
+            plan: res.goal.plan,
+            steerOptions: [
+              { label: 'Approve', action: 'approve' },
+              { label: 'Regenerate plan', action: 'regenerate' },
+            ],
+          },
           timestamp: Date.now(),
         })
       }
@@ -67,66 +75,32 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
       switch (event.type) {
         case 'status_change': {
           setGoalStatus(event.data.status as string)
-          addMessage({
-            role: 'system',
-            text: (event.data.message as string) || `Status: ${event.data.status as string}`,
-            type: 'text',
-            timestamp: event.timestamp,
-          })
+          // Don't add a message — just update state
           break
         }
         case 'plan_ready': {
-          const plan = event.data.plan as Array<{ step: number; description: string; files: string[] }>
+          const plan = event.data.plan as api.SubTask[]
           const total = event.data.totalSteps as number
           setGoalStatus('awaiting_approval')
           setTotalSteps(total)
-          setPendingSteer({
-            prompt: 'Here is my plan. Shall I proceed?',
-            options: [
-              { label: 'Approve', action: 'approve' },
-              { label: 'Regenerate plan', action: 'regenerate' },
-            ],
-          })
-          addMessage({
-            role: 'assistant',
-            text: `I've created a plan with ${total} steps. Review and approve to start execution.`,
-            type: 'plan',
-            data: { plan },
-            timestamp: event.timestamp,
-          })
+          planBuffer.current = plan
           break
         }
         case 'step_start': {
-          setPendingSteer(null)
-          setFailureSteer(null)
+          stepBuffer.current = {
+            step: event.data.step as number,
+            description: event.data.description as string,
+          }
+          toolCallBuffer.current = []
           setCurrentStep(event.data.step as number)
-          addMessage({
-            role: 'assistant',
-            text: `**Step ${event.data.step as number}:** ${event.data.description as string}`,
-            type: 'text',
-            data: { files: event.data.files as string[] },
-            timestamp: event.timestamp,
-          })
           break
         }
         case 'step_progress': {
-          addMessage({
-            role: 'assistant',
-            text: (event.data.message as string) || 'Working...',
-            type: 'step_progress',
-            data: event.data,
-            timestamp: event.timestamp,
-          })
+          // Ignored — not useful for chat
           break
         }
         case 'tool_call': {
-          addMessage({
-            role: 'system',
-            text: '',
-            type: 'tool_call',
-            data: event.data,
-            timestamp: event.timestamp,
-          })
+          toolCallBuffer.current.push(event.data as Record<string, unknown>)
           break
         }
         case 'file_edit': {
@@ -134,30 +108,83 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
           break
         }
         case 'step_complete': {
+          const step = event.data.step as number
+          const description = event.data.description as string
+          const success = event.data.success as boolean
+          const summary = event.data.summary as string
+
           setFileChangeCount((c) => c + 1)
-          addMessage({
-            role: 'assistant',
-            text: `✅ **Step ${event.data.step as number} complete:** ${event.data.summary as string}`,
-            type: 'step_complete',
-            data: event.data,
-            timestamp: event.timestamp,
-          })
+
+          if (success) {
+            const toolCalls = [...toolCallBuffer.current]
+            toolCallBuffer.current = []
+            stepBuffer.current = null
+
+            addMessage({
+              role: 'assistant',
+              text: `**Step ${step}: ${description}**`,
+              type: 'step_turn',
+              data: {
+                step,
+                description,
+                toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+                success: true,
+                summary,
+              },
+              timestamp: event.timestamp,
+            })
+          } else {
+            // Keep step info and tool calls buffered — steering_needed follows
+            stepBuffer.current = { step, description }
+          }
           break
         }
         case 'steering_needed': {
-          const options = event.data.options as Array<{ label: string; action: string }>
+          const options = event.data.options as SteerOption[]
+
           if (options.some((o) => o.action === 'approve')) {
-            setPendingSteer({ prompt: event.data.prompt as string, options })
+            // Flush plan buffer
+            const plan = planBuffer.current
+            planBuffer.current = null
+            if (plan) {
+              addMessage({
+                role: 'assistant',
+                text: `I've created a plan with ${plan.length} steps.`,
+                type: 'plan_turn',
+                data: { plan, steerOptions: options },
+                timestamp: event.timestamp,
+              })
+            }
           } else {
-            setFailureSteer({ prompt: event.data.prompt as string, options })
+            // Flush failure step buffer
+            const step = stepBuffer.current
+            const toolCalls = [...toolCallBuffer.current]
+            toolCallBuffer.current = []
+            stepBuffer.current = null
+            if (step) {
+              addMessage({
+                role: 'assistant',
+                text: `**Step ${step.step}: ${step.description}**`,
+                type: 'step_failure',
+                data: {
+                  step: step.step,
+                  description: step.description,
+                  toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+                  success: false,
+                  steerOptions: options,
+                },
+                timestamp: event.timestamp,
+              })
+            } else {
+              addMessage({
+                role: 'assistant',
+                text: event.data.prompt as string,
+                type: 'step_failure',
+                data: { steerOptions: options },
+                timestamp: event.timestamp,
+              })
+            }
           }
-          addMessage({
-            role: 'assistant',
-            text: event.data.prompt as string,
-            type: 'steer_options',
-            data: { options },
-            timestamp: event.timestamp,
-          })
           break
         }
         case 'user_message': {
@@ -171,8 +198,9 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
         }
         case 'error': {
           setGoalStatus('failed')
-          setPendingSteer(null)
-          setFailureSteer(null)
+          planBuffer.current = null
+          toolCallBuffer.current = []
+          stepBuffer.current = null
           addMessage({
             role: 'system',
             text: `❌ Error: ${event.data.message as string}`,
@@ -184,8 +212,9 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
         case 'done': {
           const status = event.data.status as string
           setGoalStatus(status)
-          setPendingSteer(null)
-          setFailureSteer(null)
+          planBuffer.current = null
+          toolCallBuffer.current = []
+          stepBuffer.current = null
           addMessage({
             role: 'system',
             text: `🏁 ${event.data.message as string}`,
@@ -217,37 +246,18 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
           type: 'user_message',
           timestamp: Date.now(),
         })
-      } else if (action === 'approve') {
-        setPendingSteer(null)
-        addMessage({
-          role: 'user',
-          text: 'Approved — proceed with the plan.',
-          type: 'text',
-          timestamp: Date.now(),
-        })
-      } else if (action === 'regenerate') {
-        setPendingSteer(null)
-        addMessage({
-          role: 'user',
-          text: 'Regenerate the plan.',
-          type: 'text',
-          timestamp: Date.now(),
-        })
-      } else if (action === 'stop') {
-        setPendingSteer(null)
-        setFailureSteer(null)
-        addMessage({
-          role: 'user',
-          text: 'Stop execution.',
-          type: 'text',
-          timestamp: Date.now(),
-        })
       } else {
-        setFailureSteer(null)
+        const labels: Record<string, string> = {
+          approve: 'Approved — proceed',
+          regenerate: 'Regenerate the plan',
+          stop: 'Stop execution',
+          redo: 'Retry step',
+          skip: 'Skip step',
+        }
         addMessage({
           role: 'user',
-          text: `Action: ${action}`,
-          type: 'text',
+          text: labels[action] || `Action: ${action}`,
+          type: 'user_message',
           timestamp: Date.now(),
         })
       }
@@ -271,8 +281,6 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
     goalStatus,
     currentStep,
     totalSteps,
-    pendingSteer,
-    failureSteer,
     steer,
     fileChangeCount,
   }

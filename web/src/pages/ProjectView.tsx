@@ -16,7 +16,7 @@ export function ProjectView() {
   const [refreshKey, setRefreshKey] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const { messages, goalStatus, currentStep, totalSteps, pendingSteer, failureSteer, steer, fileChangeCount } =
+  const { messages, goalStatus, currentStep, totalSteps, steer, fileChangeCount } =
     useAgentStream(id || null, goalId)
 
   useEffect(() => {
@@ -107,8 +107,6 @@ export function ProjectView() {
         <div className="flex-1 flex flex-col min-w-0">
           <ChatStream
             messages={messages}
-            pendingSteer={pendingSteer}
-            failureSteer={failureSteer}
             onSteer={steer}
             goalStatus={goalStatus}
             currentStep={currentStep}
