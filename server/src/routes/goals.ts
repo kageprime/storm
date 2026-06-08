@@ -158,6 +158,44 @@ goals.get('/:projectId/goals/:goalId', async (c) => {
   })
 })
 
+goals.get('/:projectId/goals/:goalId/messages', async (c) => {
+  const { userId } = c.get('user')
+  const goalId = c.req.param('goalId')
+
+  const db = getDb()
+  const result = db.exec(
+    `SELECT g.id FROM goals g
+     JOIN projects p ON g.project_id = p.id
+     WHERE g.id = ? AND p.user_id = ?`,
+    [goalId, userId]
+  )
+
+  if (!result[0]?.values?.length) {
+    c.status(404)
+    return c.json({ error: 'Goal not found', code: 'NOT_FOUND' })
+  }
+
+  const msgResult = db.exec(
+    `SELECT role, content, metadata_json, created_at
+     FROM goal_messages
+     WHERE goal_id = ?
+     ORDER BY created_at ASC`,
+    [goalId]
+  )
+
+  const messages = (msgResult[0]?.values || []).map((row: unknown[]) => {
+    const [role, content, metadataJson, createdAt] = row as string[]
+    return {
+      role,
+      content,
+      metadata: metadataJson ? JSON.parse(metadataJson) : null,
+      timestamp: new Date(createdAt).getTime(),
+    }
+  })
+
+  return c.json({ messages })
+})
+
 goals.get('/:projectId/goals', async (c) => {
   const { userId } = c.get('user')
   const projectId = c.req.param('projectId')

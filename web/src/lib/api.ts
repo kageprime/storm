@@ -165,7 +165,7 @@ export function getFileContent(projectId: string, filePath: string): Promise<Res
 // --- SSE ---
 
 export type GoalEvent = {
-  type: 'status_change' | 'plan_ready' | 'step_start' | 'step_progress' | 'step_complete' | 'steering_needed' | 'user_message' | 'error' | 'done'
+  type: 'status_change' | 'plan_ready' | 'step_start' | 'step_progress' | 'step_complete' | 'tool_call' | 'file_edit' | 'steering_needed' | 'user_message' | 'error' | 'done'
   goalId: string
   projectId: string
   data: Record<string, unknown>

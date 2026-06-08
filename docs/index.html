@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Storm — OpenCode Agent Platform</title>
   <link rel="stylesheet" href="assets/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 </head>
 <body>
   <nav>
@@ -23,7 +24,7 @@
   <section class="hero">
     <div class="container">
       <h1>AI Coding Agent<br><span>for the Web</span></h1>
-      <p>A hosted web service wrapping opencode with a Claude-like UI. Users submit coding goals, a free DeepSeek agent works on them autonomously in sandboxed environments.</p>
+      <p>A hosted web service wrapping opencode with a Claude-like UI. Users submit coding goals, a free DeepSeek agent works on them autonomously in sandboxed environments. Built with React 19 + Hono + SQLite.</p>
       <div style="display: flex; gap: 1rem; justify-content: center;">
         <a href="pages/architecture.html" class="btn btn-primary">Architecture</a>
         <a href="pages/api.html" class="btn btn-outline">API Reference</a>
@@ -42,7 +43,11 @@
         </div>
         <div class="card">
           <h3> Real-time Streaming</h3>
-          <p>Watch the agent work live via SSE — every tool call, file edit, and reasoning step streams to the browser as it happens.</p>
+          <p>Watch the agent work live via SSE — every step summary, status change, and completion event streams to the browser as it happens.</p>
+        </div>
+        <div class="card">
+          <h3> Live File Preview</h3>
+          <p>Browse the sandbox file tree and preview any file — HTML renders in a sandboxed iframe, images display inline, code gets syntax-highlighted.</p>
         </div>
         <div class="card">
           <h3> User Steering</h3>
@@ -55,6 +60,10 @@
         <div class="card">
           <h3> Sandboxed Execution</h3>
           <p>Each project runs in an isolated filesystem directory. opencode operates only within its sandbox. Docker isolation coming in Phase 2.</p>
+        </div>
+        <div class="card">
+          <h3> Message History</h3>
+          <p>Every goal conversation — including plans, step results, steering actions, and user messages — is persisted and reloaded on reconnect.</p>
         </div>
         <div class="card">
           <h3> Hosted Service</h3>
@@ -86,5 +95,6 @@
       <p>Storm — OpenCode Agent Platform</p>
     </div>
   </footer>
+  <script>mermaid.initialize({ startOnLoad: true, theme: 'dark' })</script>
 </body>
 </html>

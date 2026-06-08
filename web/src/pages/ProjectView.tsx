@@ -16,7 +16,7 @@ export function ProjectView() {
   const [refreshKey, setRefreshKey] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const { messages, goalStatus, currentStep, totalSteps, pendingSteer, failureSteer, steer } =
+  const { messages, goalStatus, currentStep, totalSteps, pendingSteer, failureSteer, steer, fileChangeCount } =
     useAgentStream(id || null, goalId)
 
   useEffect(() => {
@@ -24,12 +24,12 @@ export function ProjectView() {
     api.getProject(id).then((res) => setProject(res.project)).catch(() => navigate('/'))
   }, [id, navigate])
 
-  // Refresh file tree on changes
+  // Refresh file tree when files change (step completes)
   useEffect(() => {
-    if (goalStatus === 'executing' || goalStatus === 'completed' || goalStatus === 'steering' || goalStatus === 'failed') {
+    if (fileChangeCount > 0) {
       setRefreshKey((k) => k + 1)
     }
-  }, [goalStatus, currentStep])
+  }, [fileChangeCount])
 
   async function handleSubmitGoal(e: FormEvent) {
     e.preventDefault()

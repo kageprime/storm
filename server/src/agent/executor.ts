@@ -52,7 +52,10 @@ Please complete this task. Work in the project directory and make all necessary 
       query: { directory: sandboxPath },
     })
 
-    const info = result.data as { info?: { error?: { message?: string } }; parts?: Array<{ type?: string; text?: string }> }
+    const info = result.data as {
+      info?: { error?: { message?: string } }
+      parts?: Array<{ type?: string; text?: string; tool?: string; callID?: string; state?: Record<string, unknown>; id?: string }>
+    }
 
     if (info?.info?.error) {
       onEvent({
@@ -62,6 +65,40 @@ Please complete this task. Work in the project directory and make all necessary 
       })
 
       return { success: false, summary: info.info.error.message || 'Task failed' }
+    }
+
+    // Emit tool call events from response parts
+    const toolParts = info?.parts?.filter((p) => p.type === 'tool') ?? []
+    for (const part of toolParts) {
+      const state = part.state as Record<string, unknown> | undefined
+      const input = (state?.input as Record<string, unknown>) || {}
+      const fileName =
+        (input.path as string) ||
+        (input.file as string) ||
+        (input.file_path as string) ||
+        ''
+
+      onEvent({
+        type: 'tool_call',
+        data: {
+          tool: part.tool || 'unknown',
+          callID: part.callID || '',
+          input,
+          output: (state?.output as string) || (state?.error as string) || '',
+          status: (state?.status as string) || 'completed',
+          title: (state?.title as string) || '',
+          file: fileName,
+        },
+        timestamp: Date.now(),
+      })
+
+      if (fileName) {
+        onEvent({
+          type: 'file_edit',
+          data: { file: fileName },
+          timestamp: Date.now(),
+        })
+      }
     }
 
     const textParts = info?.parts?.filter((p) => p.type === 'text') ?? []

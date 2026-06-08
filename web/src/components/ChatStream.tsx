@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ChatMessage } from '../hooks/useAgentStream'
 import { PlanDisplay } from './PlanDisplay'
 import { SteeringButtons } from './SteeringButtons'
@@ -131,6 +131,10 @@ function MessageBubble({
     )
   }
 
+  if (message.type === 'tool_call') {
+    return <MessageToolCall data={message.data || {}} />
+  }
+
   const files = message.data?.files
   const fileList = Array.isArray(files) ? (files as string[]) : null
 
@@ -163,6 +167,88 @@ function MessageBubble({
         <span className="text-[10px] text-storm-muted mt-1 block opacity-60">
           {new Date(message.timestamp).toLocaleTimeString()}
         </span>
+      </div>
+    </div>
+  )
+}
+
+function toolIcon(tool: string): string {
+  if (tool.startsWith('FileRead') || tool.startsWith('Read')) return '📖'
+  if (tool.startsWith('FileWrite') || tool.startsWith('Write') || tool.startsWith('Edit')) return '✏️'
+  if (tool.startsWith('Bash') || tool.startsWith('Shell') || tool.startsWith('Terminal')) return '💻'
+  if (tool.startsWith('Grep') || tool.startsWith('Search') || tool.startsWith('Find')) return '🔍'
+  if (tool.startsWith('FileDelete') || tool.startsWith('Delete')) return '🗑️'
+  if (tool.startsWith('List') || tool.startsWith('Glob')) return '📂'
+  return '⚙️'
+}
+
+function shortInput(input: Record<string, unknown>): string {
+  const val = input.command || input.path || input.file || input.pattern || input.query || ''
+  return typeof val === 'string' ? val.slice(0, 120) : ''
+}
+
+function inputLabel(input: Record<string, unknown>): string {
+  if (input.command) return 'command'
+  if (input.path) return 'path'
+  if (input.file) return 'file'
+  if (input.pattern) return 'pattern'
+  if (input.query) return 'query'
+  if (input.content !== undefined) return 'content'
+  return ''
+}
+
+function MessageToolCall({ data }: { data: Record<string, unknown> }) {
+  const [expanded, setExpanded] = useState(false)
+  const tool = (data.tool as string) || ''
+  const input = (data.input as Record<string, unknown>) || {}
+  const output = (data.output as string) || ''
+  const status = (data.status as string) || ''
+  const title = (data.title as string) || tool
+  const file = (data.file as string) || ''
+  const isError = status === 'error'
+  const isFileOp = !!file
+
+  return (
+    <div className="flex justify-start">
+      <div
+        className={`max-w-[80%] rounded-xl px-3 py-1.5 ${
+          isError
+            ? 'bg-red-900/15 border border-red-800/30'
+            : 'bg-storm-surface border border-storm-border/60'
+        }`}
+      >
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="flex items-center gap-1.5 text-xs w-full text-left"
+        >
+          <span>{toolIcon(tool)}</span>
+          <span className="font-medium text-storm-text/80">{title}</span>
+          {isFileOp && (
+            <span className="font-mono text-storm-muted/70 truncate max-w-[200px]">{file}</span>
+          )}
+          {isError ? (
+            <span className="text-red-400 ml-auto">failed</span>
+          ) : (
+            <span className="text-green-400/70 ml-auto">done</span>
+          )}
+          <span className="text-storm-muted/50 text-[10px]">{expanded ? '▲' : '▼'}</span>
+        </button>
+        {expanded && (
+          <div className="mt-1.5 space-y-1 text-xs font-mono border-t border-storm-border/40 pt-1.5">
+            {shortInput(input) && (
+              <div>
+                <span className="text-storm-muted/60">{inputLabel(input)}: </span>
+                <span className="text-storm-text/80">{shortInput(input)}</span>
+              </div>
+            )}
+            {output && (
+              <div>
+                <span className="text-storm-muted/60">result: </span>
+                <span className="text-storm-text/70 whitespace-pre-wrap">{output.slice(0, 300)}</span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )

@@ -5,7 +5,7 @@ export type ChatMessage = {
   id: string
   role: 'user' | 'assistant' | 'system'
   text: string
-  type: 'text' | 'plan' | 'user_message' | 'steer_options' | 'step_progress' | 'step_complete' | 'error' | 'done'
+  type: 'text' | 'plan' | 'user_message' | 'steer_options' | 'step_progress' | 'step_complete' | 'tool_call' | 'error' | 'done'
   data?: Record<string, unknown>
   timestamp: number
 }
@@ -14,6 +14,7 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [goalStatus, setGoalStatus] = useState<string | null>(null)
   const [currentStep, setCurrentStep] = useState(0)
+  const [fileChangeCount, setFileChangeCount] = useState(0)
   const [totalSteps, setTotalSteps] = useState(0)
   const [pendingSteer, setPendingSteer] = useState<{
     prompt: string
@@ -118,7 +119,22 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
           })
           break
         }
+        case 'tool_call': {
+          addMessage({
+            role: 'system',
+            text: '',
+            type: 'tool_call',
+            data: event.data,
+            timestamp: event.timestamp,
+          })
+          break
+        }
+        case 'file_edit': {
+          // Triggers tree refresh; no message needed
+          break
+        }
         case 'step_complete': {
+          setFileChangeCount((c) => c + 1)
           addMessage({
             role: 'assistant',
             text: `✅ **Step ${event.data.step as number} complete:** ${event.data.summary as string}`,
@@ -258,5 +274,6 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
     pendingSteer,
     failureSteer,
     steer,
+    fileChangeCount,
   }
 }

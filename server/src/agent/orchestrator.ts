@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import { v4 as uuid } from 'uuid'
 import { getDb, saveDb } from '../db/index.js'
 import { openCodeManager } from './manager.js'
 import { executeStep, type ExecutorEvent } from './executor.js'
@@ -7,7 +8,7 @@ import { PLAN_PROMPT, parsePlanResponse, type SubTask } from './planner.js'
 export type GoalStatus = 'planning' | 'awaiting_approval' | 'executing' | 'steering' | 'completed' | 'failed' | 'cancelled'
 
 export type GoalEvent = {
-  type: 'status_change' | 'plan_ready' | 'step_start' | 'step_progress' | 'step_complete' | 'user_message' | 'steering_needed' | 'error' | 'done'
+  type: 'status_change' | 'plan_ready' | 'step_start' | 'step_progress' | 'step_complete' | 'tool_call' | 'file_edit' | 'user_message' | 'steering_needed' | 'error' | 'done'
   goalId: string
   projectId: string
   data: Record<string, unknown>
@@ -34,6 +35,15 @@ type GoalState = {
 class Orchestrator extends EventEmitter {
   private goals = new Map<string, GoalState>()
 
+  private saveMessage(goalId: string, role: string, content: string, metadata?: Record<string, unknown>): void {
+    const db = getDb()
+    db.run(
+      'INSERT INTO goal_messages (id, goal_id, role, content, metadata_json) VALUES (?, ?, ?, ?, ?)',
+      [uuid(), goalId, role, content, metadata ? JSON.stringify(metadata) : null]
+    )
+    saveDb()
+  }
+
   async submitGoal(goalId: string, projectId: string, goalText: string, sandboxPath: string): Promise<void> {
     const state: GoalState = {
       id: goalId,
@@ -55,6 +65,9 @@ class Orchestrator extends EventEmitter {
       data: { status: 'planning', message: 'Analyzing your goal and creating a plan...' },
       timestamp: Date.now(),
     })
+
+    this.saveMessage(goalId, 'system', `**Goal:** ${goalText}`)
+    this.saveMessage(goalId, 'system', 'Analyzing your goal and creating a plan...')
 
     try {
       const client = await openCodeManager.getOrCreate(sandboxPath)
@@ -101,6 +114,8 @@ class Orchestrator extends EventEmitter {
         timestamp: Date.now(),
       })
 
+      this.saveMessage(goalId, 'assistant', `I've created a plan with ${plan.length} steps.`, { plan })
+
       this.emit('event', {
         type: 'steering_needed',
         goalId,
@@ -113,6 +128,13 @@ class Orchestrator extends EventEmitter {
           ],
         },
         timestamp: Date.now(),
+      })
+
+      this.saveMessage(goalId, 'system', 'Here is my plan. Shall I proceed?', {
+        options: [
+          { label: 'Approve', action: 'approve' },
+          { label: 'Regenerate plan', action: 'regenerate' },
+        ],
       })
     } catch (err) {
       state.status = 'failed'
@@ -129,6 +151,8 @@ class Orchestrator extends EventEmitter {
         data: { message: state.error },
         timestamp: Date.now(),
       })
+
+      this.saveMessage(goalId, 'system', `❌ Error: ${state.error}`)
     }
   }
 
@@ -140,6 +164,7 @@ class Orchestrator extends EventEmitter {
       const text = payload?.text as string
       if (!text) throw new Error('Message text is required')
       state.context.push(`## User message\n${text}`)
+      this.saveMessage(goalId, 'user', text, { action: 'message' })
       this.emit('event', {
         type: 'user_message',
         goalId: state.id,
@@ -159,6 +184,7 @@ class Orchestrator extends EventEmitter {
       state.status = 'executing'
       db2.run('UPDATE goals SET status = ? WHERE id = ?', ['executing', goalId])
       saveDb()
+      this.saveMessage(goalId, 'user', 'Approved — proceed with the plan.', { action: 'approve' })
       this.executeNextStep(state, sandboxPath2).catch((err) => {
         console.error('Step execution failed:', err)
       })
@@ -168,15 +194,19 @@ class Orchestrator extends EventEmitter {
     if (action === 'regenerate' && state.status === 'awaiting_approval') {
       db2.run('UPDATE goals SET status = ? WHERE id = ?', ['planning', goalId])
       saveDb()
+      this.saveMessage(goalId, 'user', 'Regenerate the plan.', { action: 'regenerate' })
       await this.submitGoal(state.id, state.projectId, state.goalText, sandboxPath2)
       return
     }
 
     if (action === 'stop') {
       state.status = 'cancelled'
-      const db2 = getDb()
-      db2.run('UPDATE goals SET status = ? WHERE id = ?', ['cancelled', goalId])
+      const db3 = getDb()
+      db3.run('UPDATE goals SET status = ? WHERE id = ?', ['cancelled', goalId])
       saveDb()
+
+      this.saveMessage(goalId, 'user', 'Stop execution.', { action: 'stop' })
+      this.saveMessage(goalId, 'system', '🏁 Goal cancelled by user.')
 
       this.emit('event', {
         type: 'done',
@@ -199,11 +229,13 @@ class Orchestrator extends EventEmitter {
     if (!sandboxPath) throw new Error('Project sandbox not found')
 
     if (action === 'redo') {
+      this.saveMessage(goalId, 'user', 'Retry step.', { action: 'redo' })
       state.status = 'executing'
       db3.run('UPDATE goals SET status = ? WHERE id = ?', ['executing', goalId])
       saveDb()
       await this.executeNextStep(state, sandboxPath)
     } else if (action === 'skip') {
+      this.saveMessage(goalId, 'user', 'Skip step.', { action: 'skip' })
       state.status = 'executing'
       state.currentStep++
       db3.run('UPDATE goals SET status = ?, current_step = ? WHERE id = ?', ['executing', state.currentStep, goalId])
@@ -220,6 +252,8 @@ class Orchestrator extends EventEmitter {
       const db = getDb()
       db.run('UPDATE goals SET status = ?, current_step = ? WHERE id = ?', ['completed', state.currentStep, state.id])
       saveDb()
+
+      this.saveMessage(state.id, 'system', '🏁 All steps completed successfully.')
 
       this.emit('event', {
         type: 'done',
@@ -244,6 +278,11 @@ class Orchestrator extends EventEmitter {
       timestamp: Date.now(),
     })
 
+    this.saveMessage(state.id, 'assistant', `**Step ${displayStep}:** ${step.description}`, {
+      step: displayStep,
+      files: step.files,
+    })
+
     const client = await openCodeManager.getOrCreate(sandboxPath)
 
     const result = await executeStep(
@@ -252,8 +291,9 @@ class Orchestrator extends EventEmitter {
       step.description,
       state.context.join('\n'),
       (event: ExecutorEvent) => {
+        const eventType = event.type === 'tool_call' || event.type === 'file_edit' ? event.type : 'step_progress'
         this.emit('event', {
-          type: 'step_progress',
+          type: eventType,
           goalId: state.id,
           projectId: state.projectId,
           data: event.data,
@@ -283,6 +323,10 @@ class Orchestrator extends EventEmitter {
     })
 
     if (result.success) {
+      this.saveMessage(state.id, 'assistant', `✅ **Step ${displayStep} complete:** ${result.summary}`, {
+        step: displayStep,
+        success: true,
+      })
       // Auto-continue to next step
       await this.executeNextStep(state, sandboxPath)
     } else {
@@ -290,6 +334,14 @@ class Orchestrator extends EventEmitter {
       const db2 = getDb()
       db2.run('UPDATE goals SET status = ? WHERE id = ?', ['steering', state.id])
       saveDb()
+
+      this.saveMessage(state.id, 'system', `Step ${displayStep} failed. What would you like to do?`, {
+        options: [
+          { label: 'Retry', action: 'redo' },
+          { label: 'Skip step', action: 'skip' },
+          { label: 'Stop', action: 'stop' },
+        ],
+      })
 
       this.emit('event', {
         type: 'steering_needed',

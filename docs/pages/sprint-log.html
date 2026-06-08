@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sprint Log — Storm</title>
   <link rel="stylesheet" href="../assets/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 </head>
 <body>
   <nav>
@@ -72,7 +73,7 @@
         </tbody>
       </table>
 
-      <h3>Sprint 2 — Agent Loop <span class="badge badge-progress">In Progress</span></h3>
+      <h3>Sprint 2 — Agent Loop <span class="badge badge-done">Done</span></h3>
       <p style="margin-bottom: 1.5rem; color: var(--storm-text-muted);">
         Goal: Build the planner, executor, orchestrator, and goal routes with SSE streaming.
       </p>
@@ -82,24 +83,24 @@
         </thead>
         <tbody>
           <tr>
-            <td>OpenCode manager (server lifecycle per sandbox)</td>
+            <td>OpenCode manager (connect to external server)</td>
             <td><span class="badge badge-done">Done</span></td>
-            <td>createOpencode() with port 0 for dynamic port allocation</td>
+            <td>createOpencodeClient({baseUrl}) — no child processes</td>
           </tr>
           <tr>
             <td>Planner (structured goal decomposition)</td>
             <td><span class="badge badge-done">Done</span></td>
-            <td>Uses opencode prompt with JSON output instruction</td>
+            <td>PLAN_PROMPT + parsePlanResponse for JSON output</td>
           </tr>
           <tr>
             <td>Executor (step-by-step task execution)</td>
             <td><span class="badge badge-done">Done</span></td>
-            <td>Creates files, streams events, returns summary</td>
+            <td>Fresh session per step, streams events, returns summary</td>
           </tr>
           <tr>
             <td>Orchestrator (full lifecycle management)</td>
             <td><span class="badge badge-done">Done</span></td>
-            <td>plan → steer → execute → steer → complete loop</td>
+            <td>plan → await_approval → execute → steer → complete loop</td>
           </tr>
           <tr>
             <td>Goal routes (POST, SSE stream, steer)</td>
@@ -109,29 +110,145 @@
           <tr>
             <td>End-to-end flow verified</td>
             <td><span class="badge badge-done">Done</span></td>
-            <td>Goal → Plan → Await approval → Execute → Complete</td>
+            <td>Goal → Plan → Approve → Execute steps → Complete</td>
+          </tr>
+          <tr>
+            <td>Port conflict resolved</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Connect to existing opencode on :4096 instead of spawning</td>
           </tr>
         </tbody>
       </table>
 
-      <h3>Sprint 3 — Frontend <span class="badge badge-pending">Pending</span></h3>
-      <p style="margin-bottom: 1rem; color: var(--storm-text-muted);">
-        Plan: React app scaffold, login, dashboard, project view, SSE integration, steering UI.
+      <h3>Sprint 3 — Frontend <span class="badge badge-done">Done</span></h3>
+      <p style="margin-bottom: 1.5rem; color: var(--storm-text-muted);">
+        Goal: React app scaffold, login, dashboard, project view, SSE integration, steering UI, file preview.
       </p>
+      <table>
+        <thead>
+          <tr><th>Task</th><th>Status</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Frontend scaffold (Vite + React 19 + Tailwind)</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Tailwind 3, React Router 7, dark theme</td>
+          </tr>
+          <tr>
+            <td>API client (auth, projects, goals, files, SSE)</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>fetch + ReadableStream for SSE (supports Auth header)</td>
+          </tr>
+          <tr>
+            <td>Auth hook + Login page</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>localStorage persistence, email/password toggle</td>
+          </tr>
+          <tr>
+            <td>Dashboard (project list, create, delete)</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Modal for create, delete with confirmation</td>
+          </tr>
+          <tr>
+            <td>ProjectView (three-pane layout)</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Chat | Preview with always-active input bar</td>
+          </tr>
+          <tr>
+            <td>ChatStream + PlanDisplay + SteeringButtons</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Plan display, progress, approval + failure buttons</td>
+          </tr>
+          <tr>
+            <td>SSE agent stream hook (useAgentStream)</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Two-phase steering, message history load, mid-exec messages</td>
+          </tr>
+          <tr>
+            <td>PreviewPanel (file tree + content preview)</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>HTML iframe (sandboxed), images, text/code</td>
+          </tr>
+          <tr>
+            <td>Router with protected routes</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Login redirect, Layout with header + sign out</td>
+          </tr>
+        </tbody>
+      </table>
 
-      <h3>Sprint 4 — Real-time Polish <span class="badge badge-pending">Pending</span></h3>
-      <p style="margin-bottom: 1rem; color: var(--storm-text-muted);">
-        Plan: Live diff viewer, tool call display, progress bars, error handling.
+      <h3>Sprint 4 — Message Persistence <span class="badge badge-done">Done</span></h3>
+      <p style="margin-bottom: 1.5rem; color: var(--storm-text-muted);">
+        Goal: Persist all goal events to SQLite and expose message history API.
       </p>
+      <table>
+        <thead>
+          <tr><th>Task</th><th>Status</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>saveMessage() helper in Orchestrator</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Inserts into goal_messages with role, content, metadata</td>
+          </tr>
+          <tr>
+            <td>Persist all key events</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Plan, steering prompts, steps, user messages, errors, completion</td>
+          </tr>
+          <tr>
+            <td>GET /goals/:id/messages endpoint</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Returns ordered messages with ownership check</td>
+          </tr>
+        </tbody>
+      </table>
 
-      <h3>Sprint 5 — Documentation <span class="badge badge-pending">Pending</span></h3>
-      <p style="margin-bottom: 1rem; color: var(--storm-text-muted);">
-        Plan: Full docs site — architecture, API reference, deployment guide.
+      <h3>Sprint 5 — Documentation <span class="badge badge-progress">In Progress</span></h3>
+      <p style="margin-bottom: 1.5rem; color: var(--storm-text-muted);">
+        Goal: Full docs site — architecture, API reference, deployment guide, sprint log.
       </p>
+      <table>
+        <thead>
+          <tr><th>Task</th><th>Status</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Landing page (index.html)</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Hero, features, tech stack</td>
+          </tr>
+          <tr>
+            <td>Architecture page</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>System diagram, agent loop flow, design decisions</td>
+          </tr>
+          <tr>
+            <td>API reference</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Auth, projects, goals, files, SSE events</td>
+          </tr>
+          <tr>
+            <td>Deployment guide</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Docker + Caddy + opencode server setup, env vars</td>
+          </tr>
+          <tr>
+            <td>Sprint log</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>All sprints tracked with task/status/notes</td>
+          </tr>
+          <tr>
+            <td>Keep docs in sync with code</td>
+            <td><span class="badge badge-progress">Active</span></td>
+            <td>Update as features evolve</td>
+          </tr>
+        </tbody>
+      </table>
 
       <h3>Sprint 6 — Deployment <span class="badge badge-pending">Pending</span></h3>
       <p style="margin-bottom: 1rem; color: var(--storm-text-muted);">
-        Plan: Docker + Caddy setup, DigitalOcean provisioning, CI/CD.
+        Plan: Docker Compose setup, DigitalOcean provisioning, domain configuration, CI/CD.
       </p>
     </div>
   </section>
@@ -141,5 +258,6 @@
       <p>Storm — Sprint Log</p>
     </div>
   </footer>
+  <script>mermaid.initialize({ startOnLoad: true, theme: 'dark' })</script>
 </body>
 </html>

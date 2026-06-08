@@ -165,17 +165,21 @@ section .subtitle {
   margin-bottom: 3rem;
 }
 
-/* Architecture diagram */
-.diagram {
+/* Mermaid diagrams */
+.mermaid {
   background: var(--storm-surface);
   border: 1px solid var(--storm-border);
   border-radius: 0.75rem;
-  padding: 2rem;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.85rem;
-  line-height: 1.8;
+  padding: 1rem;
   overflow-x: auto;
-  white-space: pre;
+  margin: 1.5rem 0;
+  display: flex;
+  justify-content: center;
+}
+
+.mermaid svg {
+  max-width: 100%;
+  height: auto;
 }
 
 /* Code blocks */

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Architecture — Storm</title>
   <link rel="stylesheet" href="../assets/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 </head>
 <body>
   <nav>
@@ -26,51 +27,56 @@
       <p class="subtitle">System architecture and data flow</p>
 
       <h3>High-Level Architecture</h3>
-      <div class="diagram">
-Browser (React + Tailwind)
-       |
-       | HTTP + SSE
-       v
-  Hono Backend (Node.js)
-       |
-       | @opencode-ai/sdk
-       v
-  opencode server (embedded)
-       |
-       | opencode/deepseek-v4-flash-free
-       v
-  Free DeepSeek Model
-       |
-  +----+----+
-  |         |
-  SQLite   Sandbox Directory
-  (users,  (1 per project,
-   goals)   git repo or empty)</div>
+      <pre class="mermaid">
+        graph TD
+          B["Browser<br/>React 19 + Tailwind"]
+          H["Hono Backend<br/>Node.js + TypeScript"]
+          DB["SQLite (sql.js)<br/>users, projects<br/>goals, goal_messages"]
+          O["opencode server<br/>port 4096"]
+          D["Free DeepSeek Model"]
+          S["Sandbox Directory<br/>1 per project<br/>git init / clone"]
+
+          B <-->|"HTTP / SSE<br/>fetch ReadableStream"| H
+          H -->|"Files API<br/>tree + content"| B
+          H -->|"SQLite"| DB
+          H -->|"@opencode-ai/sdk"| O
+          O -->|"opencode/deepseek-v4-flash-free"| D
+          D -.->|"reads/writes"| S
+      </pre>
 
       <h3>Agent Loop Flow</h3>
-      <div class="diagram">
-User: "Build a REST API for a todo app"
-       |
-       v
-[Goal submitted] --> POST /api/projects/:id/goals
-       |
-       v
-[Planner] --> Send goal to opencode with json_schema format
-       |       Returns structured sub-tasks:
-       |       [{id, description, files, depends_on}, ...]
-       |
-       v
-[User approves plan] <-- Steering point #1 (buttons + chat)
-       |
-       v
-[For each sub-task]:
-    |--- Send sub-task to opencode via session.prompt()
-    |--- Stream progress via SSE (tool calls, file diffs)
-    |--- User sees real-time updates in browser
-    +--- On completion: Steering point #2 (continue/redo/stop)
-       |
-       v
-[Goal complete] --> Summary to user</div>
+      <pre class="mermaid">
+        graph TD
+          U["User submits goal text"]
+          P["POST /goals<br/>Orchestrator.submitGoal()"]
+          PL["Planner<br/>PLAN_PROMPT → opencode<br/>Returns structured JSON"]
+          PR["Plan ready<br/>SSE: plan_ready<br/>SaveMessage(plan)"]
+          AP{"Approve?"}
+          EX["Execute steps<br/>Fresh session per step<br/>SSE: step_start, step_complete"]
+          MSG["User sends message<br/>injected into context"]
+          OK{"Step status?"}
+          AUTO["Auto-continue<br/>next step"]
+          FAIL{"Failure?"}
+          G["Goal complete<br/>SSE: done<br/>SaveMessage(completion)"]
+          C["Goal cancelled"]
+
+          U --> P
+          P --> PL
+          PL --> PR
+          PR --> AP
+          AP -->|"approve"| EX
+          AP -->|"regenerate"| PL
+          EX -->|"mid-exec msg"| MSG
+          MSG --> EX
+          EX --> OK
+          OK -->|"success"| AUTO
+          OK -->|"all done"| G
+          OK -->|"failure"| FAIL
+          FAIL -->|"redo"| EX
+          FAIL -->|"skip"| AUTO
+          FAIL -->|"stop"| C
+          AUTO --> EX
+      </pre>
 
       <h3>Key Design Decisions</h3>
       <div class="grid grid-2" style="margin-top: 1.5rem;">
@@ -83,8 +89,8 @@ User: "Build a REST API for a todo app"
           <p>Pure JavaScript SQLite — no native compilation needed. Zero-config database that persists to a single file. Perfect for single-server deployment.</p>
         </div>
         <div class="card">
-          <h3>Why SDK over CLI?</h3>
-          <p>The @opencode-ai/sdk provides programmatic control over opencode — create sessions, send prompts, stream events — without shelling out to a subprocess.</p>
+          <h3>Why SDK + External Server?</h3>
+          <p>We connect to an existing opencode server on port 4096 via <code>createOpencodeClient</code> — no child processes, port conflicts, or startup delays. Fresh session per step avoids context pollution.</p>
         </div>
         <div class="card">
           <h3>Why SSE over WebSocket?</h3>
@@ -98,6 +104,14 @@ User: "Build a REST API for a todo app"
           <h3>Why Free DeepSeek?</h3>
           <p>opencode/deepseek-v4-flash-free is built into opencode — no API key, no costs, no rate limits. Powers the entire agent loop at zero operational expense.</p>
         </div>
+        <div class="card">
+          <h3>Why Message Persistence?</h3>
+          <p>Every event (plan, steps, steering, user messages, errors) saves to <code>goal_messages</code>. Users who reconnect or refresh see full history — no state loss.</p>
+        </div>
+        <div class="card">
+          <h3>Why Files API?</h3>
+          <p>Backend serves recursive file trees (skipping .git/node_modules) and file content (text or base64). Frontend renders HTML in sandboxed iframes, images inline, and code in pre blocks.</p>
+        </div>
       </div>
     </div>
   </section>
@@ -107,5 +121,6 @@ User: "Build a REST API for a todo app"
       <p>Storm — Architecture</p>
     </div>
   </footer>
+  <script>mermaid.initialize({ startOnLoad: true, theme: 'dark' })</script>
 </body>
 </html>

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>API — Storm</title>
   <link rel="stylesheet" href="../assets/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 </head>
 <body>
   <nav>
@@ -122,6 +123,109 @@ Authorization: Bearer &lt;token&gt;
     }
   ]
 }</pre>
+
+      <h3>Goals (Authenticated)</h3>
+      <table>
+        <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>POST</code></td><td><code>/api/projects/:id/goals</code></td><td>Submit a new goal</td></tr>
+          <tr><td><code>GET</code></td><td><code>/api/projects/:id/goals</code></td><td>List goals for a project</td></tr>
+          <tr><td><code>GET</code></td><td><code>/api/projects/:id/goals/:gid</code></td><td>Get goal status</td></tr>
+          <tr><td><code>GET</code></td><td><code>/api/projects/:id/goals/:gid/stream</code></td><td>SSE event stream</td></tr>
+          <tr><td><code>POST</code></td><td><code>/api/projects/:id/goals/:gid/steer</code></td><td>Send steering action</td></tr>
+          <tr><td><code>GET</code></td><td><code>/api/projects/:id/goals/:gid/messages</code></td><td>Get persisted message history</td></tr>
+        </tbody>
+      </table>
+
+      <h4>Submit a Goal</h4>
+      <pre>POST /api/projects/:id/goals
+Authorization: Bearer &lt;token&gt;
+{
+  "goal": "Build a REST API for a todo app"
+}
+
+202 Response:
+{
+  "goal": { "id": "uuid", "status": "planning", ... }
+}</pre>
+
+      <h4>SSE Stream</h4>
+      <pre>GET /api/projects/:id/goals/:gid/stream
+Authorization: Bearer &lt;token&gt;
+
+Fetched via fetch() + ReadableStream (not native EventSource)
+because we need to set the Authorization header.
+
+Events:
+  event: status_change   { status, message }
+  event: plan_ready       { plan: [{step, description, files}], totalSteps }
+  event: steering_needed  { prompt, options: [{label, action}] }
+  event: step_start       { step, description, files }
+  event: step_complete    { step, success, summary }
+  event: user_message     { text }
+  event: done             { status, message }
+  event: error            { message }</pre>
+
+      <h4>Steer a Goal</h4>
+      <pre>POST /api/projects/:id/goals/:gid/steer
+Authorization: Bearer &lt;token&gt;
+{
+  "action": "approve" // approve | regenerate | stop | message | redo | skip
+}
+
+// For 'message' action, include payload:
+{
+  "action": "message",
+  "payload": { "text": "Try using Express instead of Hono" }
+}
+
+200 Response: { "ok": true, "status": "executing" }</pre>
+
+      <h4>Goal Messages</h4>
+      <pre>GET /api/projects/:id/goals/:gid/messages
+Authorization: Bearer &lt;token&gt;
+
+200 Response:
+{
+  "messages": [
+    { "role": "system",    "content": "...", "metadata": null, "timestamp": 1234567890 },
+    { "role": "assistant", "content": "...", "metadata": { "plan": [...] }, "timestamp": 1234567890 },
+    { "role": "user",      "content": "...", "metadata": { "action": "approve" }, "timestamp": 1234567890 }
+  ]
+}</pre>
+
+      <h3>Files (Authenticated)</h3>
+      <table>
+        <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>GET</code></td><td><code>/api/projects/:id/files</code></td><td>Recursive file tree</td></tr>
+          <tr><td><code>GET</code></td><td><code>/api/projects/:id/files/*</code></td><td>File content (text or base64)</td></tr>
+        </tbody>
+      </table>
+
+      <h4>File Tree</h4>
+      <pre>GET /api/projects/:id/files
+Authorization: Bearer &lt;token&gt;
+
+200 Response:
+{
+  "tree": [
+    { "name": "src", "type": "directory", "children": [
+      { "name": "index.ts", "type": "file", "path": "src/index.ts" }
+    ]}
+  ]
+}
+// Skips .git and node_modules directories</pre>
+
+      <h4>File Content</h4>
+      <pre>GET /api/projects/:id/files/src/index.ts
+Authorization: Bearer &lt;token&gt;
+
+200 Response (text):
+{ "content": "console.log('hello')\n", "encoding": "utf8" }
+
+200 Response (binary):
+{ "content": "iVBORw0KGgo...", "encoding": "base64" }</pre>
     </div>
   </section>
 
@@ -130,5 +234,6 @@ Authorization: Bearer &lt;token&gt;
       <p>Storm — API Reference</p>
     </div>
   </footer>
+  <script>mermaid.initialize({ startOnLoad: true, theme: 'dark' })</script>
 </body>
 </html>

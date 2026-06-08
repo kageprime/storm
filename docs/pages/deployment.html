@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Deployment — Storm</title>
   <link rel="stylesheet" href="../assets/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 </head>
 <body>
   <nav>
@@ -33,35 +34,19 @@
       </ul>
 
       <h3>Production Architecture</h3>
-      <div class="diagram">
-                         Internet
-                            |
-                            v
-  +----------------------------+
-  |  Caddy (reverse proxy)     |
-  |  :443 (HTTPS) + :80 (redirect) |
-  |  Auto TLS via Let's Encrypt |
-  +------------+---------------+
-               |
-               v
-  +----------------------------+
-  |  storm-server (Docker)     |
-  |  :3000 (internal)          |
-  |                            |
-  |  +----------------------+ |
-  |  | Hono + opencode SDK  | |
-  |  +----------------------+ |
-  |  +----------------------+ |
-  |  | SQLite (volume)      | |
-  |  +----------------------+ |
-  +----------------------------+
-               |
-               v
-  +----------------------------+
-  |  Sandbox directories       |
-  |  /data/sandboxes/          |
-  |  (Docker volume)           |
-  +----------------------------+</div>
+      <pre class="mermaid">
+        graph TD
+          I["Internet"]
+          CA["Caddy<br/>Reverse Proxy<br/>:443 HTTPS + :80 redirect<br/>Auto TLS (Let's Encrypt)<br/>Serves storm.example.com"]
+          SR["storm-server (Docker)<br/>:3000 internal<br/>Hono + opencode SDK<br/>Serves: /api/**, /assets/**<br/>SQLite volume: data/"]
+          OC["opencode server (Docker)<br/>:4096 internal<br/>opencode serve --port 4096"]
+          SB["Sandbox directories<br/>/data/sandboxes/<br/>shared volume"]
+
+          I -->|"port 443/80"| CA
+          CA -->|":3000"| SR
+          SR -->|"createOpencodeClient({ baseUrl: 'http://opencode:4096' })"| OC
+          OC --> SB
+      </pre>
 
       <h3>Quick Start</h3>
       <pre># Clone the repo on the droplet
@@ -70,6 +55,9 @@ cd /opt/storm
 
 # Create required directories
 mkdir -p data/sandboxes
+
+# Build frontend
+cd web && npm install && npm run build && cd ..
 
 # Build and start
 docker compose up -d
@@ -85,8 +73,18 @@ docker compose logs -f</pre>
           <tr><td><code>HOST</code></td><td><code>0.0.0.0</code></td><td>Bind address</td></tr>
           <tr><td><code>JWT_SECRET</code></td><td><em>required in prod</em></td><td>Secret for signing JWT tokens</td></tr>
           <tr><td><code>SANDBOX_ROOT</code></td><td><code>./sandboxes</code></td><td>Directory for sandboxed projects</td></tr>
+          <tr><td><code>OPCODE_URL</code></td><td><code>http://127.0.0.1:4096</code></td><td>URL of running opencode server</td></tr>
+          <tr><td><code>VITE_API_URL</code></td><td><code>/api</code></td><td>Frontend API base URL (dev: http://localhost:3000)</td></tr>
         </tbody>
       </table>
+
+      <h3>Prerequisites: opencode Server</h3>
+      <p style="color: var(--storm-text-muted);">The opencode server must be running on port 4096 (or the port specified by <code>OPCODE_URL</code>). The backend does not spawn it — you must run it separately:</p>
+      <pre># Install opencode
+npm install -g @opencode-ai/cli
+
+# Start the server
+opencode serve --port 4096</pre>
     </div>
   </section>
 
@@ -95,5 +93,6 @@ docker compose logs -f</pre>
       <p>Storm — Deployment Guide</p>
     </div>
   </footer>
+  <script>mermaid.initialize({ startOnLoad: true, theme: 'dark' })</script>
 </body>
 </html>
