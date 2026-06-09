@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ChatMessage, SteerOption } from '../hooks/useAgentStream'
-import { PlanDisplay } from './PlanDisplay'
+import type { SubTask } from '../lib/api'
+import { StepTimeline, type StepState } from './StepTimeline'
+import { FormattedText } from './FormattedText'
 
 type Props = {
   messages: ChatMessage[]
@@ -8,9 +10,10 @@ type Props = {
   goalStatus: string | null
   currentStep: number
   totalSteps: number
+  liveStepStates?: Record<number, StepState>
 }
 
-export function ChatStream({ messages, onSteer, goalStatus, currentStep, totalSteps }: Props) {
+export function ChatStream({ messages, onSteer, goalStatus, currentStep, totalSteps, liveStepStates }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -19,72 +22,74 @@ export function ChatStream({ messages, onSteer, goalStatus, currentStep, totalSt
 
   const isExecuting = goalStatus === 'executing'
   const isPlanning = goalStatus === 'planning'
+  const isAwaitingApproval = goalStatus === 'awaiting_approval'
+
+  const plan = extractPlan(messages)
+  const isLive = liveStepStates && Object.keys(liveStepStates).length > 0
+  const stepStates = isLive ? mergeWithPlan(liveStepStates, plan, currentStep) : buildStepStates(messages, currentStep)
 
   return (
-    <div className="flex-1 overflow-y-auto px-4 py-6 space-y-3">
-      {/* Progress bar during execution */}
-      {isExecuting && totalSteps > 0 && (
-        <div className="sticky top-0 bg-storm-bg/95 backdrop-blur pb-3 z-10">
-          <div className="flex items-center justify-between text-xs text-storm-muted mb-1">
-            <span>
-              Step {currentStep} of {totalSteps}
-            </span>
-            <span>{Math.round(((currentStep - 1) / totalSteps) * 100)}%</span>
-          </div>
-          <div className="w-full h-1.5 bg-storm-border rounded-full overflow-hidden">
-            <div
-              className="h-full bg-storm-accent rounded-full transition-all duration-500"
-              style={{ width: `${((currentStep - 1) / totalSteps) * 100}%` }}
-            />
-          </div>
-        </div>
-      )}
-
+    <div className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
       {messages.length === 0 && (
-        <div className="text-center text-storm-muted py-12">
-          <p className="text-lg mb-2">Submit a goal to get started</p>
-          <p className="text-sm">
-            The agent will create a plan, then execute step by step autonomously after you approve.
+        <div className="flex flex-col items-center justify-center py-20 text-center">
+          <div className="w-12 h-12 rounded-full bg-storm-accent/10 flex items-center justify-center mb-4">
+            <svg className="w-6 h-6 text-storm-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+            </svg>
+          </div>
+          <p className="text-storm-muted text-sm max-w-md">
+            Describe what you want to build. The agent will create a plan, then execute it step by step after you approve.
           </p>
         </div>
       )}
 
-      {messages.map((msg, i) => (
-        <MessageBubble
-          key={msg.id}
-          message={msg}
-          onSteer={onSteer}
-          currentStep={currentStep}
-          isLast={i === messages.length - 1}
-          isExecuting={isExecuting}
-          isPlanning={isPlanning}
-        />
+      {groupByTurns(messages).map((turn, gi) => (
+        <div key={gi} className="space-y-4">
+          {/* User message */}
+          {turn.user && <UserBubble message={turn.user} />}
+
+          {/* AI response — all non-user messages in one bubble */}
+          {turn.responses.length > 0 && (
+            <AiResponseBubble
+              messages={turn.responses}
+              plan={plan}
+              stepStates={stepStates}
+              onSteer={onSteer}
+              isExecuting={isExecuting}
+              isPlanning={isPlanning}
+              goalStatus={goalStatus}
+            />
+          )}
+        </div>
       ))}
 
-      {/* Loading dots */}
-      {isPlanning && (
-        <div className="flex items-center gap-2 text-storm-muted text-sm py-2 ml-10">
-          <span>Planning</span>
-          <span className="loading-dot">.</span>
-          <span className="loading-dot">.</span>
-          <span className="loading-dot">.</span>
+      {/* Loading indicator during planning */}
+      {(isPlanning || (isAwaitingApproval && messages.length === 1)) && (
+        <div className="flex items-center gap-2.5 text-storm-muted text-sm py-2">
+          <div className="flex gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-storm-accent/60 animate-pulse" />
+            <span className="w-1.5 h-1.5 rounded-full bg-storm-accent/60 animate-pulse" style={{ animationDelay: '0.15s' }} />
+            <span className="w-1.5 h-1.5 rounded-full bg-storm-accent/60 animate-pulse" style={{ animationDelay: '0.3s' }} />
+          </div>
+          <span className="text-storm-muted/70">Planning...</span>
         </div>
       )}
       {isExecuting && (
-        <div className="flex items-center gap-2 text-storm-muted text-sm py-2 ml-10">
-          <span>Working</span>
-          <span className="loading-dot">.</span>
-          <span className="loading-dot">.</span>
-          <span className="loading-dot">.</span>
+        <div className="flex items-center gap-2.5 text-storm-muted text-sm py-2">
+          <div className="flex gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-storm-accent/60 animate-pulse" />
+            <span className="w-1.5 h-1.5 rounded-full bg-storm-accent/60 animate-pulse" style={{ animationDelay: '0.15s' }} />
+            <span className="w-1.5 h-1.5 rounded-full bg-storm-accent/60 animate-pulse" style={{ animationDelay: '0.3s' }} />
+          </div>
+          <span className="text-storm-muted/70">Working...</span>
         </div>
       )}
 
-      {/* Stop button during execution */}
       {isExecuting && (
-        <div className="flex justify-center">
+        <div className="flex justify-center pt-1">
           <button
             onClick={() => onSteer('stop')}
-            className="px-3 py-1 text-xs text-red-400 border border-red-800/40 rounded-full hover:bg-red-900/20 transition-colors"
+            className="px-3 py-1 text-xs text-red-400/70 border border-red-800/30 rounded-full hover:bg-red-900/15 hover:text-red-300 transition-colors"
           >
             Stop execution
           </button>
@@ -96,11 +101,180 @@ export function ChatStream({ messages, onSteer, goalStatus, currentStep, totalSt
   )
 }
 
-/* ---------- Avatar ---------- */
+/* ---------- Turn Grouping ---------- */
+
+type Turn = {
+  user: ChatMessage | null
+  responses: ChatMessage[]
+}
+
+function groupByTurns(msgs: ChatMessage[]): Turn[] {
+  const turns: Turn[] = []
+  let current: Turn = { user: null, responses: [] }
+
+  for (const msg of msgs) {
+    if (msg.role === 'user') {
+      if (current.user || current.responses.length > 0) {
+        turns.push(current)
+        current = { user: null, responses: [] }
+      }
+      current.user = msg
+    } else {
+      current.responses.push(msg)
+    }
+  }
+  if (current.user || current.responses.length > 0) {
+    turns.push(current)
+  }
+  return turns
+}
+
+/* ---------- AI Response Bubble ---------- */
+
+function AiResponseBubble({
+  messages,
+  plan,
+  stepStates,
+  onSteer,
+  isExecuting,
+  isPlanning,
+  goalStatus,
+}: {
+  messages: ChatMessage[]
+  plan: SubTask[]
+  stepStates: StepState[]
+  onSteer: (action: string, payload?: Record<string, unknown>) => void
+  isExecuting: boolean
+  isPlanning: boolean
+  goalStatus: string | null
+}) {
+  const hasPlanTurn = messages.some((m) => m.type === 'plan_turn')
+  const hasSteps = messages.some((m) => m.type === 'step_turn' || m.type === 'step_failure')
+  const needsApproval = hasPlanTurn && !isExecuting && (goalStatus === 'awaiting_approval' || goalStatus === 'planning')
+  const showTimeline = plan.length > 0 && !needsApproval && hasSteps
+
+  return (
+    <div className="flex gap-3 animate-in">
+      <AssistantAvatar />
+      <div className="flex-1 max-w-[85%] sm:max-w-[75%] space-y-2">
+        <div className="msg-ai rounded-xl px-4 py-3 space-y-3">
+          {/* Text sections (system messages, assistant text) */}
+          {messages.filter(isDisplayMessage).map((msg) => {
+            if (msg.type === 'plan_turn') {
+              const plan = (msg.data?.plan as SubTask[]) || []
+              const options = needsApproval ? (msg.data?.steerOptions as SteerOption[] | undefined) : undefined
+              return (
+                <PlanNotice
+                  key={msg.id}
+                  count={plan.length}
+                  steerOptions={options}
+                  onSteer={onSteer}
+                  disabled={isPlanning || isExecuting}
+                />
+              )
+            }
+            if (msg.type === 'step_turn' || msg.type === 'step_failure') return null
+            if (msg.type === 'done') {
+              const status = (msg.data?.status as string) || ''
+              return <DoneBanner key={msg.id} status={status} text={msg.text} />
+            }
+            if (msg.type === 'error') {
+              return (
+                <div key={msg.id} className="text-sm text-red-300 leading-relaxed">
+                  <FormattedText text={msg.text} />
+                </div>
+              )
+            }
+            return (
+              <div key={msg.id} className="text-sm text-storm-text leading-relaxed">
+                <FormattedText text={msg.text} />
+              </div>
+            )
+          })}
+
+          {/* Step timeline (inline, after plan is approved) */}
+          {showTimeline && (
+            <StepTimeline plan={plan} steps={stepStates} onSteer={onSteer} />
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ---------- Plan Notice ---------- */
+
+function PlanNotice({
+  count,
+  steerOptions,
+  onSteer,
+  disabled,
+}: {
+  count: number
+  steerOptions?: SteerOption[]
+  onSteer: (action: string, payload?: Record<string, unknown>) => void
+  disabled: boolean
+}) {
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-storm-text/80 flex items-center gap-2">
+        <svg className="w-4 h-4 text-storm-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
+        <span>
+          <strong className="text-storm-text font-semibold">Plan — {count} step{count !== 1 ? 's' : ''}</strong>
+          <span className="text-storm-muted/60 ml-1.5 text-xs">(view PLAN.md in the file tree)</span>
+        </span>
+      </p>
+      {steerOptions && (
+        <InlineSteerButtons options={steerOptions} onSteer={onSteer} disabled={disabled} />
+      )}
+    </div>
+  )
+}
+
+/* ---------- Done Banner ---------- */
+
+function DoneBanner({ status, text }: { status: string; text: string }) {
+  const isCompleted = status === 'completed'
+  return (
+    <div className="flex items-center gap-2">
+      <div className={`w-5 h-5 rounded-full flex items-center justify-center ${isCompleted ? 'bg-green-600/30' : 'bg-storm-border/60'}`}>
+        {isCompleted ? (
+          <svg className="w-3 h-3 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+          </svg>
+        ) : (
+          <svg className="w-3 h-3 text-storm-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
+          </svg>
+        )}
+      </div>
+      <span className={`text-sm font-medium ${isCompleted ? 'text-green-400' : 'text-storm-muted'}`}>
+        <FormattedText text={text} />
+      </span>
+    </div>
+  )
+}
+
+/* ---------- User Bubble ---------- */
+
+function UserBubble({ message }: { message: ChatMessage }) {
+  return (
+    <div className="flex items-start gap-2 justify-end animate-in">
+      <div className="max-w-[70%] rounded-xl bg-storm-accent/15 border border-storm-accent/20 px-3.5 py-2">
+        <FormattedText text={message.text} className="text-sm text-storm-text" />
+      </div>
+      <UserAvatar />
+    </div>
+  )
+}
+
+/* ---------- Avatars ---------- */
 
 function UserAvatar() {
   return (
-    <div className="w-7 h-7 rounded-full bg-storm-accent/25 flex items-center justify-center flex-shrink-0">
+    <div className="w-7 h-7 rounded-full bg-storm-accent/20 flex items-center justify-center flex-shrink-0">
       <svg className="w-3.5 h-3.5 text-storm-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
       </svg>
@@ -110,119 +284,10 @@ function UserAvatar() {
 
 function AssistantAvatar() {
   return (
-    <div className="w-7 h-7 rounded-full bg-storm-accent/15 flex items-center justify-center flex-shrink-0">
-      <svg className="w-3.5 h-3.5 text-storm-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5" />
+    <div className="w-7 h-7 rounded-full bg-storm-accent/10 flex items-center justify-center flex-shrink-0">
+      <svg className="w-3.5 h-3.5 text-storm-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
       </svg>
-    </div>
-  )
-}
-
-/* ---------- Message Bubble ---------- */
-
-function MessageBubble({
-  message,
-  onSteer,
-  currentStep,
-  isLast,
-  isExecuting,
-  isPlanning,
-}: {
-  message: ChatMessage
-  onSteer: (action: string, payload?: Record<string, unknown>) => void
-  currentStep: number
-  isLast: boolean
-  isExecuting: boolean
-  isPlanning: boolean
-}) {
-  if (message.role === 'user') {
-    return (
-      <div className="flex items-start gap-2 justify-end">
-        <div className="max-w-[75%] rounded-2xl rounded-br-sm bg-storm-accent/20 border border-storm-accent/25 px-4 py-2.5">
-          <p className="text-sm text-storm-text whitespace-pre-wrap">{message.text}</p>
-        </div>
-        <UserAvatar />
-      </div>
-    )
-  }
-
-  if (message.type === 'error') {
-    return (
-      <div className="flex items-start gap-2">
-        <AssistantAvatar />
-        <div className="max-w-[75%] rounded-2xl rounded-bl-sm bg-red-900/20 border border-red-800/40 px-4 py-2.5">
-          <p className="text-sm text-red-300 whitespace-pre-wrap">{message.text}</p>
-        </div>
-      </div>
-    )
-  }
-
-  if (message.type === 'done') {
-    return (
-      <div className="flex items-start gap-2">
-        <AssistantAvatar />
-        <div className="max-w-[75%] rounded-2xl rounded-bl-sm bg-green-900/20 border border-green-800/40 px-4 py-2.5">
-          <p className="text-sm text-green-300 whitespace-pre-wrap">{message.text}</p>
-        </div>
-      </div>
-    )
-  }
-
-  if (message.type === 'plan_turn') {
-    const plan = (message.data?.plan || []) as Array<{ step: number; description: string; files: string[] }>
-    const steerOptions = message.data?.steerOptions as SteerOption[] | undefined
-    return (
-      <div className="flex items-start gap-2">
-        <AssistantAvatar />
-        <div className="max-w-[80%] rounded-2xl rounded-bl-sm bg-storm-surface border border-storm-border px-4 py-3">
-          <p className="text-sm text-storm-text mb-3">{message.text}</p>
-          <PlanDisplay plan={plan} />
-          {steerOptions && (
-            <InlineSteerButtons options={steerOptions} onSteer={onSteer} disabled={isPlanning || isExecuting} />
-          )}
-        </div>
-      </div>
-    )
-  }
-
-  if (message.type === 'step_turn') {
-    const summary = (message.data?.summary as string) || ''
-    return (
-      <div className="flex items-start gap-2">
-        <AssistantAvatar />
-        <div className="max-w-[80%] rounded-2xl rounded-bl-sm bg-storm-surface border border-storm-border px-4 py-3">
-          <p className="text-sm text-storm-text font-medium mb-2">{message.text}</p>
-          {summary && (
-            <p className="text-sm text-storm-text/90 whitespace-pre-wrap leading-relaxed">{summary}</p>
-          )}
-        </div>
-      </div>
-    )
-  }
-
-  if (message.type === 'step_failure') {
-    const steerOptions = message.data?.steerOptions as SteerOption[] | undefined
-    return (
-      <div className="flex items-start gap-2">
-        <AssistantAvatar />
-        <div className="max-w-[80%] rounded-2xl rounded-bl-sm bg-red-900/10 border border-red-800/30 px-4 py-3">
-          <p className="text-sm text-storm-text font-medium mb-2">{message.text}</p>
-          <p className="text-sm text-red-300 mb-2">This step failed. What would you like to do?</p>
-          {steerOptions && (
-            <InlineSteerButtons options={steerOptions} onSteer={onSteer} />
-          )}
-        </div>
-      </div>
-    )
-  }
-
-  // fallback for system messages (user_message relayed from backend)
-  return (
-    <div className="flex items-start gap-2">
-      <AssistantAvatar />
-      <div className="max-w-[75%] rounded-2xl rounded-bl-sm bg-storm-surface border border-storm-border px-4 py-2.5">
-        <p className="text-sm text-storm-text whitespace-pre-wrap">{message.text}</p>
-      </div>
     </div>
   )
 }
@@ -272,4 +337,81 @@ function InlineSteerButtons({
   )
 }
 
+/* ---------- Message Filter ---------- */
 
+function isDisplayMessage(msg: ChatMessage): boolean {
+  // Filter out old persisted step_start messages matching "**Step N:**"
+  if (msg.role === 'assistant' && /^\*\*Step \d+/i.test(msg.text)) return false
+  return true
+}
+
+/* ---------- Data Extraction ---------- */
+
+function extractPlan(messages: ChatMessage[]): SubTask[] {
+  for (const msg of messages) {
+    if (msg.type === 'plan_turn') {
+      const plan = msg.data?.plan as SubTask[] | undefined
+      if (plan && plan.length > 0) return plan
+    }
+  }
+  return []
+}
+
+function buildStepStates(messages: ChatMessage[], currentStep: number): StepState[] {
+  const stepMap = new Map<number, StepState>()
+
+  for (const msg of messages) {
+    if (msg.type === 'step_turn') {
+      const step = (msg.data?.step as number) || 0
+      const success = (msg.data?.success as boolean) ?? true
+      stepMap.set(step, {
+        step,
+        description: (msg.data?.description as string) || '',
+        status: success ? 'completed' : 'failed',
+        summary: (msg.data?.summary as string) || '',
+        toolCalls: msg.data?.toolCalls as Record<string, unknown>[] | undefined,
+      })
+    } else if (msg.type === 'step_failure') {
+      const step = (msg.data?.step as number) || 0
+      stepMap.set(step, {
+        step,
+        description: (msg.data?.description as string) || '',
+        status: 'failed',
+        toolCalls: msg.data?.toolCalls as Record<string, unknown>[] | undefined,
+        steerOptions: msg.data?.steerOptions as SteerOption[] | undefined,
+      })
+    }
+  }
+
+  const plan = extractPlan(messages)
+  const result: StepState[] = []
+
+  for (const p of plan) {
+    const existing = stepMap.get(p.step)
+    if (existing) {
+      result.push({
+        ...existing,
+        description: existing.description || p.description,
+      })
+    } else if (p.step === currentStep && currentStep > 0) {
+      result.push({ step: p.step, description: p.description, files: p.files, status: 'active' })
+    } else {
+      result.push({ step: p.step, description: p.description, files: p.files, status: 'pending' })
+    }
+  }
+
+  return result
+}
+
+function mergeWithPlan(states: Record<number, StepState>, plan: SubTask[], currentStep: number): StepState[] {
+  return plan.map((p) => {
+    const existing = states[p.step]
+    if (existing) {
+      return { ...existing, description: existing.description || p.description }
+    }
+    if (p.step === currentStep && currentStep > 0) {
+      return { step: p.step, description: p.description, files: p.files, status: 'active' }
+    }
+    return { step: p.step, description: p.description, files: p.files, status: 'pending' }
+  })
+}

@@ -3,12 +3,13 @@ import { v4 as uuid } from 'uuid'
 import { getDb, saveDb } from '../db/index.js'
 import { openCodeManager } from './manager.js'
 import { executeStep, type ExecutorEvent } from './executor.js'
-import { PLAN_PROMPT, parsePlanResponse, type SubTask } from './planner.js'
+import { PLAN_PROMPT, parsePlanResponse, CODING_CONVENTIONS, promptForAgent, type SubTask } from './planner.js'
+import { writeSandboxFile, readSandboxFile, getProjectSandboxInfo } from '../sandbox.js'
 
 export type GoalStatus = 'planning' | 'awaiting_approval' | 'executing' | 'steering' | 'completed' | 'failed' | 'cancelled'
 
 export type GoalEvent = {
-  type: 'status_change' | 'plan_ready' | 'step_start' | 'step_progress' | 'step_complete' | 'tool_call' | 'file_edit' | 'user_message' | 'steering_needed' | 'error' | 'done'
+  type: 'status_change' | 'plan_ready' | 'step_start' | 'step_progress' | 'step_complete' | 'tool_call' | 'file_edit' | 'user_message' | 'steering_needed' | 'error' | 'done' | 'parallel_start' | 'parallel_complete'
   goalId: string
   projectId: string
   data: Record<string, unknown>
@@ -22,16 +23,33 @@ type GoalState = {
   goalText: string
   plan: SubTask[]
   currentStep: number
+  failedSteps: number[]
   context: string[]
   error: string | null
+  sandboxPath: string | null
+  daytonaOpencodeUrl: string | null
 }
 
-/**
- * Orchestrator manages the full agent loop lifecycle for a single goal.
- * Plan requires user approval. Once approved, steps auto-continue.
- * Users can send messages (appended to context) or stop at any time.
- * On step failure, user intervention is requested.
- */
+const PLAN_FILENAME = 'PLAN.md'
+
+function buildPlanMd(plan: SubTask[], completedSteps: Set<number>, failedSteps: Set<number>): string {
+  const lines = ['# Plan', '']
+  for (const s of plan) {
+    if (failedSteps.has(s.step)) {
+      lines.push(`- [x] ~~**Step ${s.step}:** ${s.description}~~ *(failed)*`)
+    } else if (completedSteps.has(s.step)) {
+      lines.push(`- [x] **Step ${s.step}:** ${s.description}`)
+    } else {
+      lines.push(`- [ ] **Step ${s.step}:** ${s.description}`)
+    }
+    if (s.files?.length) {
+      lines.push(`  - Files: ${s.files.join(', ')}`)
+    }
+  }
+  lines.push('', '---', '*Last updated: ' + new Date().toISOString() + '*')
+  return lines.join('\n')
+}
+
 class Orchestrator extends EventEmitter {
   private goals = new Map<string, GoalState>()
 
@@ -44,7 +62,7 @@ class Orchestrator extends EventEmitter {
     saveDb()
   }
 
-  async submitGoal(goalId: string, projectId: string, goalText: string, sandboxPath: string): Promise<void> {
+  async submitGoal(goalId: string, projectId: string, goalText: string, sandboxPath: string | null, daytonaOpencodeUrl?: string | null): Promise<void> {
     const state: GoalState = {
       id: goalId,
       projectId,
@@ -52,8 +70,11 @@ class Orchestrator extends EventEmitter {
       goalText,
       plan: [],
       currentStep: 0,
+      failedSteps: [],
       context: [],
       error: null,
+      sandboxPath,
+      daytonaOpencodeUrl: daytonaOpencodeUrl || null,
     }
 
     this.goals.set(goalId, state)
@@ -66,15 +87,17 @@ class Orchestrator extends EventEmitter {
       timestamp: Date.now(),
     })
 
-    this.saveMessage(goalId, 'system', `**Goal:** ${goalText}`)
+    this.saveMessage(goalId, 'user', goalText)
     this.saveMessage(goalId, 'system', 'Analyzing your goal and creating a plan...')
 
     try {
-      const client = await openCodeManager.getOrCreate(sandboxPath)
+      const baseUrl = state.daytonaOpencodeUrl || undefined
+      const client = await openCodeManager.getOrCreate(projectId, baseUrl)
+      const query = sandboxPath ? { directory: sandboxPath } : {}
 
       const sessionRes = await client.session.create({
         body: { title: goalText },
-        query: { directory: sandboxPath },
+        query,
       })
 
       const sessionData = sessionRes.data as { id?: string } | undefined
@@ -86,8 +109,9 @@ class Orchestrator extends EventEmitter {
         body: {
           parts: [{ type: 'text', text: `${PLAN_PROMPT}\n${goalText}` }],
           model: { providerID: 'opencode', modelID: 'deepseek-v4-flash-free' },
+          system: CODING_CONVENTIONS,
         },
-        query: { directory: sandboxPath },
+        query,
       })
 
       const planData = planResult.data as { parts?: Array<{ type?: string; text?: string }> }
@@ -104,6 +128,17 @@ class Orchestrator extends EventEmitter {
       )
       saveDb()
 
+      // Write PLAN.md to sandbox
+      const sandboxInfo = getProjectSandboxInfo(projectId)
+      if (sandboxInfo) {
+        await writeSandboxFile(
+          sandboxInfo.sandboxPath,
+          sandboxInfo.daytonaSandboxId,
+          PLAN_FILENAME,
+          buildPlanMd(plan, new Set(), new Set()),
+        )
+      }
+
       state.status = 'awaiting_approval'
 
       this.emit('event', {
@@ -114,7 +149,12 @@ class Orchestrator extends EventEmitter {
         timestamp: Date.now(),
       })
 
-      this.saveMessage(goalId, 'assistant', `I've created a plan with ${plan.length} steps.`, { plan })
+      const steerOptions = [
+        { label: 'Approve', action: 'approve' },
+        { label: 'Regenerate plan', action: 'regenerate' },
+      ]
+
+      this.saveMessage(goalId, 'assistant', `I've created a plan with ${plan.length} steps.`, { plan, steerOptions })
 
       this.emit('event', {
         type: 'steering_needed',
@@ -122,20 +162,11 @@ class Orchestrator extends EventEmitter {
         projectId,
         data: {
           prompt: 'Here is my plan. Shall I proceed?',
-          options: [
-            { label: 'Approve', action: 'approve' },
-            { label: 'Regenerate plan', action: 'regenerate' },
-          ],
+          options: steerOptions,
         },
         timestamp: Date.now(),
       })
 
-      this.saveMessage(goalId, 'system', 'Here is my plan. Shall I proceed?', {
-        options: [
-          { label: 'Approve', action: 'approve' },
-          { label: 'Regenerate plan', action: 'regenerate' },
-        ],
-      })
     } catch (err) {
       state.status = 'failed'
       state.error = err instanceof Error ? err.message : 'Unknown error'
@@ -175,27 +206,24 @@ class Orchestrator extends EventEmitter {
       return
     }
 
-    const db2 = getDb()
-    const projectResult2 = db2.exec('SELECT sandbox_path FROM projects WHERE id = ?', [state.projectId])
-    const sandboxPath2 = projectResult2[0]?.values?.[0]?.[0] as string
-    if (!sandboxPath2) throw new Error('Project sandbox not found')
-
     if (action === 'approve' && state.status === 'awaiting_approval') {
       state.status = 'executing'
+      const db2 = getDb()
       db2.run('UPDATE goals SET status = ? WHERE id = ?', ['executing', goalId])
       saveDb()
       this.saveMessage(goalId, 'user', 'Approved — proceed with the plan.', { action: 'approve' })
-      this.executeNextStep(state, sandboxPath2).catch((err) => {
+      this.executeNextStep(state).catch((err) => {
         console.error('Step execution failed:', err)
       })
       return
     }
 
     if (action === 'regenerate' && state.status === 'awaiting_approval') {
+      const db2 = getDb()
       db2.run('UPDATE goals SET status = ? WHERE id = ?', ['planning', goalId])
       saveDb()
       this.saveMessage(goalId, 'user', 'Regenerate the plan.', { action: 'regenerate' })
-      await this.submitGoal(state.id, state.projectId, state.goalText, sandboxPath2)
+      await this.submitGoal(state.id, state.projectId, state.goalText, state.sandboxPath, state.daytonaOpencodeUrl)
       return
     }
 
@@ -223,30 +251,223 @@ class Orchestrator extends EventEmitter {
       throw new Error(`Action '${action}' not valid in state '${state.status}'`)
     }
 
-    const db3 = getDb()
-    const projectResult = db3.exec('SELECT sandbox_path FROM projects WHERE id = ?', [state.projectId])
-    const sandboxPath = projectResult[0]?.values?.[0]?.[0] as string
-    if (!sandboxPath) throw new Error('Project sandbox not found')
-
     if (action === 'redo') {
       this.saveMessage(goalId, 'user', 'Retry step.', { action: 'redo' })
       state.status = 'executing'
+      const db3 = getDb()
       db3.run('UPDATE goals SET status = ? WHERE id = ?', ['executing', goalId])
       saveDb()
-      await this.executeNextStep(state, sandboxPath)
+      await this.executeNextStep(state)
     } else if (action === 'skip') {
       this.saveMessage(goalId, 'user', 'Skip step.', { action: 'skip' })
       state.status = 'executing'
       state.currentStep++
+      const db3 = getDb()
       db3.run('UPDATE goals SET status = ?, current_step = ? WHERE id = ?', ['executing', state.currentStep, goalId])
       saveDb()
-      await this.executeNextStep(state, sandboxPath)
+      await this.executeNextStep(state)
     } else {
       throw new Error(`Action '${action}' not valid in state '${state.status}'`)
     }
   }
 
-  private async executeNextStep(state: GoalState, sandboxPath: string): Promise<void> {
+  private canRunParallel(a: SubTask, b: SubTask): boolean {
+    if (a.agent !== b.agent) return true
+    if (a.files?.length && b.files?.length) {
+      const fileSet = new Set(a.files)
+      return !b.files.some(f => fileSet.has(f))
+    }
+    return false
+  }
+
+  private formBatch(state: GoalState): SubTask[] {
+    const batch = [state.plan[state.currentStep]]
+    for (let i = state.currentStep + 1; i < state.plan.length; i++) {
+      const next = state.plan[i]
+      const canAllRun = batch.every(b => this.canRunParallel(b, next))
+      if (canAllRun) {
+        batch.push(next)
+      } else {
+        break
+      }
+    }
+    return batch
+  }
+
+  private async updatePlanMd(state: GoalState): Promise<void> {
+    const sandboxInfo = getProjectSandboxInfo(state.projectId)
+    if (!sandboxInfo) return
+
+    const failedSteps = new Set(state.failedSteps)
+    const completedSteps = new Set<number>()
+    for (let i = 1; i <= state.currentStep; i++) {
+      if (!failedSteps.has(i)) completedSteps.add(i)
+    }
+
+    await writeSandboxFile(
+      sandboxInfo.sandboxPath,
+      sandboxInfo.daytonaSandboxId,
+      PLAN_FILENAME,
+      buildPlanMd(state.plan, completedSteps, failedSteps),
+    )
+  }
+
+  private async executeStepBatch(state: GoalState): Promise<void> {
+    const batch = this.formBatch(state)
+    const isParallel = batch.length > 1
+
+    if (isParallel) {
+      this.emit('event', {
+        type: 'parallel_start',
+        goalId: state.id,
+        projectId: state.projectId,
+        data: {
+          steps: batch.map(s => ({ step: s.step, description: s.description, agent: s.agent, files: s.files })),
+        },
+        timestamp: Date.now(),
+      })
+    }
+
+    for (const step of batch) {
+      this.emit('event', {
+        type: 'step_start',
+        goalId: state.id,
+        projectId: state.projectId,
+        data: { step: step.step, description: step.description, files: step.files },
+        timestamp: Date.now(),
+      })
+
+    }
+
+    const baseUrl = state.daytonaOpencodeUrl || undefined
+    const client = await openCodeManager.getOrCreate(state.projectId, baseUrl)
+
+    const contextBase = state.context.join('\n')
+
+    const stepResults = await Promise.all(
+      batch.map(async (step) => {
+        const result = await executeStep(
+          client,
+          state.sandboxPath,
+          step.description,
+          contextBase,
+          (event: ExecutorEvent) => {
+            const eventType = event.type === 'tool_call' || event.type === 'file_edit' ? event.type : 'step_progress'
+            this.emit('event', {
+              type: eventType,
+              goalId: state.id,
+              projectId: state.projectId,
+              data: { ...event.data, step: step.step, agent: step.agent },
+              timestamp: event.timestamp,
+            })
+          },
+          step.agent,
+          step.agent ? promptForAgent(step.agent) : undefined,
+        )
+        return { step, result }
+      }),
+    )
+
+    // Process results in order
+    let anyFailed = false
+    let firstFailed: SubTask | null = null
+
+    for (const { step, result } of stepResults) {
+      state.context.push(`## Step ${step.step}: ${step.description}\n${result.summary}`)
+
+      state.currentStep++
+
+      this.emit('event', {
+        type: 'step_complete',
+        goalId: state.id,
+        projectId: state.projectId,
+        data: {
+          step: step.step,
+          description: step.description,
+          success: result.success,
+          summary: result.summary,
+        },
+        timestamp: Date.now(),
+      })
+
+      if (result.success) {
+        this.saveMessage(state.id, 'assistant', `✅ **Step ${step.step} complete:** ${result.summary}`, {
+          step: step.step,
+          description: step.description,
+          success: true,
+          summary: result.summary,
+        })
+      } else {
+        anyFailed = true
+        firstFailed ??= step
+        state.failedSteps.push(step.step)
+        this.saveMessage(state.id, 'assistant', `❌ **Step ${step.step} failed:** ${result.summary}`, {
+          step: step.step,
+          description: step.description,
+          success: false,
+          summary: result.summary,
+        })
+      }
+
+      await this.updatePlanMd(state)
+    }
+
+    const db = getDb()
+    db.run('UPDATE goals SET current_step = ? WHERE id = ?', [state.currentStep, state.id])
+    saveDb()
+
+    if (isParallel) {
+      this.emit('event', {
+        type: 'parallel_complete',
+        goalId: state.id,
+        projectId: state.projectId,
+        data: {
+          steps: stepResults.map(({ step, result }) => ({
+            step: step.step,
+            success: result.success,
+            summary: result.summary,
+          })),
+        },
+        timestamp: Date.now(),
+      })
+    }
+
+    if (anyFailed) {
+      state.status = 'steering'
+      const db2 = getDb()
+      db2.run('UPDATE goals SET status = ? WHERE id = ?', ['steering', state.id])
+      saveDb()
+
+      this.saveMessage(state.id, 'system', `Step ${firstFailed!.step} failed. What would you like to do?`, {
+        step: firstFailed!.step,
+        description: firstFailed!.description,
+        steerOptions: [
+          { label: 'Retry', action: 'redo' },
+          { label: 'Skip step', action: 'skip' },
+          { label: 'Stop', action: 'stop' },
+        ],
+      })
+
+      this.emit('event', {
+        type: 'steering_needed',
+        goalId: state.id,
+        projectId: state.projectId,
+        data: {
+          prompt: `Step ${firstFailed!.step} failed. What would you like to do?`,
+          options: [
+            { label: 'Retry', action: 'redo' },
+            { label: 'Skip step', action: 'skip' },
+            { label: 'Stop', action: 'stop' },
+          ],
+        },
+        timestamp: Date.now(),
+      })
+    } else {
+      await this.executeNextStep(state)
+    }
+  }
+
+  private async executeNextStep(state: GoalState): Promise<void> {
     if (state.currentStep >= state.plan.length) {
       state.status = 'completed'
       const db = getDb()
@@ -263,101 +484,11 @@ class Orchestrator extends EventEmitter {
         timestamp: Date.now(),
       })
 
-      await openCodeManager.release(sandboxPath)
+      await openCodeManager.release(state.projectId)
       return
     }
 
-    const step = state.plan[state.currentStep]
-    const displayStep = step.step
-
-    this.emit('event', {
-      type: 'step_start',
-      goalId: state.id,
-      projectId: state.projectId,
-      data: { step: displayStep, description: step.description, files: step.files },
-      timestamp: Date.now(),
-    })
-
-    this.saveMessage(state.id, 'assistant', `**Step ${displayStep}:** ${step.description}`, {
-      step: displayStep,
-      files: step.files,
-    })
-
-    const client = await openCodeManager.getOrCreate(sandboxPath)
-
-    const result = await executeStep(
-      client,
-      sandboxPath,
-      step.description,
-      state.context.join('\n'),
-      (event: ExecutorEvent) => {
-        const eventType = event.type === 'tool_call' || event.type === 'file_edit' ? event.type : 'step_progress'
-        this.emit('event', {
-          type: eventType,
-          goalId: state.id,
-          projectId: state.projectId,
-          data: event.data,
-          timestamp: event.timestamp,
-        })
-      },
-    )
-    state.context.push(`## Step ${displayStep}: ${step.description}\n${result.summary}`)
-
-    // Advance to next step in plan
-    state.currentStep++
-    const db = getDb()
-    db.run('UPDATE goals SET current_step = ? WHERE id = ?', [state.currentStep, state.id])
-    saveDb()
-
-    this.emit('event', {
-      type: 'step_complete',
-      goalId: state.id,
-      projectId: state.projectId,
-      data: {
-        step: displayStep,
-        description: step.description,
-        success: result.success,
-        summary: result.summary,
-      },
-      timestamp: Date.now(),
-    })
-
-    if (result.success) {
-      this.saveMessage(state.id, 'assistant', `✅ **Step ${displayStep} complete:** ${result.summary}`, {
-        step: displayStep,
-        success: true,
-      })
-      // Auto-continue to next step
-      await this.executeNextStep(state, sandboxPath)
-    } else {
-      state.status = 'steering'
-      const db2 = getDb()
-      db2.run('UPDATE goals SET status = ? WHERE id = ?', ['steering', state.id])
-      saveDb()
-
-      this.saveMessage(state.id, 'system', `Step ${displayStep} failed. What would you like to do?`, {
-        options: [
-          { label: 'Retry', action: 'redo' },
-          { label: 'Skip step', action: 'skip' },
-          { label: 'Stop', action: 'stop' },
-        ],
-      })
-
-      this.emit('event', {
-        type: 'steering_needed',
-        goalId: state.id,
-        projectId: state.projectId,
-        data: {
-          prompt: `Step ${displayStep} failed. What would you like to do?`,
-          options: [
-            { label: 'Retry', action: 'redo' },
-            { label: 'Skip step', action: 'skip' },
-            { label: 'Stop', action: 'stop' },
-          ],
-        },
-        timestamp: Date.now(),
-      })
-    }
+    await this.executeStepBatch(state)
   }
 
   subscribe(goalId: string, listener: (event: GoalEvent) => void): () => void {

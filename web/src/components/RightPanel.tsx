@@ -11,9 +11,10 @@ type Props = {
   refreshKey: number
   agentLogs: AgentLogEntry[]
   previewPath: string | null
+  goalStatus: string | null
 }
 
-export function RightPanel({ projectId, refreshKey, agentLogs, previewPath }: Props) {
+export function RightPanel({ projectId, refreshKey, agentLogs, previewPath, goalStatus }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>('agent')
 
   // Auto-switch to preview tab when a new preview file is available
@@ -24,9 +25,9 @@ export function RightPanel({ projectId, refreshKey, agentLogs, previewPath }: Pr
   }, [previewPath])
 
   return (
-    <div className="h-full w-full flex flex-col bg-storm-surface">
+    <div className="h-full w-full flex flex-col bg-storm-surface/30">
       {/* Tab bar */}
-      <div className="flex border-b border-storm-border text-sm flex-shrink-0">
+      <div className="flex border-b border-storm-border/60 text-sm flex-shrink-0">
         {([
           { id: 'files' as Tab, label: 'Code' },
           { id: 'preview' as Tab, label: 'Preview' },
@@ -35,10 +36,10 @@ export function RightPanel({ projectId, refreshKey, agentLogs, previewPath }: Pr
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`flex-1 px-3 py-2.5 text-xs font-medium uppercase tracking-wider transition-colors ${
+            className={`flex-1 px-3 py-2.5 text-xs font-medium transition-colors ${
               activeTab === tab.id
-                ? 'text-storm-accent border-b-2 border-storm-accent bg-storm-accent/5'
-                : 'text-storm-muted hover:text-storm-text hover:bg-storm-border/20'
+                ? 'text-storm-accent border-b-2 border-storm-accent bg-storm-accent/[0.03]'
+                : 'text-storm-muted/60 hover:text-storm-text/80'
             }`}
           >
             {tab.label}
@@ -49,7 +50,7 @@ export function RightPanel({ projectId, refreshKey, agentLogs, previewPath }: Pr
       {/* Tab content */}
       <div className="flex-1 overflow-hidden">
         {activeTab === 'files' && (
-          <FilesTab projectId={projectId} refreshKey={refreshKey} />
+          <FilesTab projectId={projectId} refreshKey={refreshKey} goalStatus={goalStatus} />
         )}
         {activeTab === 'preview' && (
           <PreviewTab projectId={projectId} filePath={previewPath} />
@@ -67,9 +68,11 @@ export function RightPanel({ projectId, refreshKey, agentLogs, previewPath }: Pr
 function FilesTab({
   projectId,
   refreshKey,
+  goalStatus,
 }: {
   projectId: string | null
   refreshKey: number
+  goalStatus: string | null
 }) {
   const [tree, setTree] = useState<FileNode[]>([])
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
@@ -88,9 +91,17 @@ function FilesTab({
     }
   }, [projectId])
 
+  // Refresh on mount + refreshKey changes
   useEffect(() => {
     loadTree()
   }, [loadTree, refreshKey])
+
+  // Poll every 3s during execution for live file updates
+  useEffect(() => {
+    if (goalStatus !== 'executing') return
+    const interval = setInterval(loadTree, 3000)
+    return () => clearInterval(interval)
+  }, [goalStatus, loadTree])
 
   async function selectFile(node: FileNode) {
     if (node.type === 'dir') {
@@ -226,8 +237,14 @@ function FilesTab({
     <div className="h-full flex flex-col">
       <Group orientation="horizontal">
         <Panel defaultSize={25} minSize={15} className="flex flex-col border-r border-storm-border">
-          <div className="border-b border-storm-border px-3 py-2 flex-shrink-0">
+          <div className="border-b border-storm-border px-3 py-2 flex-shrink-0 flex items-center justify-between">
             <span className="text-xs font-medium text-storm-muted uppercase tracking-wider">Explorer</span>
+            {goalStatus === 'executing' && (
+              <div className="flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-storm-accent animate-pulse" />
+                <span className="text-[10px] text-storm-muted/50">live</span>
+              </div>
+            )}
           </div>
           <div className="overflow-y-auto flex-1 py-1 bg-storm-surface">
             {tree.length === 0 ? (
@@ -324,26 +341,52 @@ function PreviewTab({
   projectId: string | null
   filePath: string | null
 }) {
-  const [devReady, setDevReady] = useState(false)
+  const [previewAvailable, setPreviewAvailable] = useState<boolean | null>(null)
   const [starting, setStarting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const url = projectId
-    ? filePath
-      ? api.getPreviewUrl(projectId, filePath)
-      : `/api/preview/${projectId}`
+  const selectedFileUrl = projectId && filePath
+    ? api.getPreviewUrl(projectId, filePath)
     : null
 
-  useEffect(() => {
-    if (!projectId || url) return
+  async function checkPreview() {
+    if (!projectId) return
+    try {
+      const res = await fetch(`/api/preview/${projectId}/`, { method: 'HEAD' })
+      setPreviewAvailable(res.ok)
+    } catch {
+      setPreviewAvailable(false)
+    }
+  }
+
+  async function doStartDevServer() {
+    if (!projectId) return
     setStarting(true)
-    fetch(`/api/dev-server/${projectId}/start`, {
-      method: 'POST',
-      headers: { Authorization: 'Bearer ' + localStorage.getItem('storm_token') },
-    })
-      .then((r) => r.json().then((d) => { if (d.url) setDevReady(true) }))
-      .catch(() => {})
-      .finally(() => setStarting(false))
-  }, [projectId, url])
+    setError(null)
+    try {
+      const res = await fetch(`/api/dev-server/${projectId}/start`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('storm_token') },
+      })
+      const data = await res.json()
+      if (data.url) {
+        setPreviewAvailable(true)
+      } else {
+        setError(data.error || 'Dev server failed to start')
+      }
+    } catch {
+      setError('Network error starting dev server')
+    } finally {
+      setStarting(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!projectId || selectedFileUrl) return
+    let cancelled = false
+    checkPreview()
+    return () => { cancelled = true }
+  }, [projectId, selectedFileUrl])
 
   if (!projectId) {
     return (
@@ -353,37 +396,39 @@ function PreviewTab({
     )
   }
 
-  if (url) {
-    return <PreviewFrame src={url} projectId={projectId} />
+  if (selectedFileUrl) {
+    return <PreviewFrame src={selectedFileUrl} projectId={projectId} />
   }
 
-  if (devReady) {
+  if (previewAvailable) {
     return <PreviewFrame src={`/api/preview/${projectId}`} projectId={projectId} />
+  }
+
+  if (previewAvailable === null) {
+    return (
+      <div className="flex items-center justify-center h-full text-storm-muted text-sm">
+        Checking preview...
+      </div>
+    )
   }
 
   return (
     <div className="flex flex-col items-center justify-center h-full text-storm-muted text-sm gap-4">
       <p>No preview file selected</p>
       <p className="text-xs">Start the dev server or select an HTML file from the Code tab</p>
+      {error && (
+        <p className="text-xs text-red-400 max-w-xs text-center">{error}</p>
+      )}
       {starting ? (
         <div className="flex items-center gap-2 text-storm-accent text-xs">
           <span className="animate-spin">&#9696;</span> Starting dev server...
         </div>
       ) : (
         <button
-          onClick={() => {
-            setStarting(true)
-            fetch(`/api/dev-server/${projectId}/start`, {
-              method: 'POST',
-              headers: { Authorization: 'Bearer ' + localStorage.getItem('storm_token') },
-            })
-              .then((r) => r.json().then((d) => { if (d.url) setDevReady(true) }))
-              .catch(() => {})
-              .finally(() => setStarting(false))
-          }}
+          onClick={doStartDevServer}
           className="px-4 py-2 text-xs rounded-lg bg-storm-accent hover:bg-storm-accent-hover text-white transition-colors"
         >
-          Start Dev Server
+          {error ? 'Retry Dev Server' : 'Start Dev Server'}
         </button>
       )}
     </div>
@@ -453,6 +498,24 @@ function AgentTab({ logs }: { logs: AgentLogEntry[] }) {
               <div key={entry.id} className="border-l-2 border-green-600/40 pl-3 py-0.5 text-green-400/80">
                 <span>✏️ {file}</span>
                 {summary && <span className="text-green-400/60 ml-1">— {summary}</span>}
+              </div>
+            )
+          }
+          case 'parallel_start': {
+            const batchSteps = entry.data.steps as Array<{ step: number; description: string }> | undefined
+            return (
+              <div key={entry.id} className="border-l-2 border-yellow-500/50 pl-3 py-1 text-yellow-400/90">
+                <span className="font-semibold">⚡ Parallel batch</span>
+                <span className="text-storm-muted ml-2">
+                  {batchSteps?.map(s => `Step ${s.step}`).join(', ') || ''}
+                </span>
+              </div>
+            )
+          }
+          case 'parallel_complete': {
+            return (
+              <div key={entry.id} className="border-l-2 border-yellow-500/30 pl-3 py-1 text-yellow-400/60">
+                ✓ Parallel batch complete
               </div>
             )
           }

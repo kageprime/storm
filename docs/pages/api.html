@@ -157,14 +157,19 @@ Fetched via fetch() + ReadableStream (not native EventSource)
 because we need to set the Authorization header.
 
 Events:
-  event: status_change   { status, message }
-  event: plan_ready       { plan: [{step, description, files}], totalSteps }
-  event: steering_needed  { prompt, options: [{label, action}] }
-  event: step_start       { step, description, files }
-  event: step_complete    { step, success, summary }
-  event: user_message     { text }
-  event: done             { status, message }
-  event: error            { message }</pre>
+  event: status_change       { status, message }
+  event: plan_ready           { plan: [{step, description, files}], totalSteps }
+  event: steering_needed      { prompt, options: [{label, action}] }
+  event: step_start           { step, description, files }
+  event: step_progress        { step, progress }
+  event: step_complete        { step, success, summary }
+  event: tool_call            { step, tool, args }
+  event: file_edit            { step, path, action }
+  event: parallel_start       { batch: [step, ...] }
+  event: parallel_complete    { batch: [step, ...] }
+  event: user_message         { text }
+  event: done                 { status, message }
+  event: error                { message }</pre>
 
       <h4>Steer a Goal</h4>
       <pre>POST /api/projects/:id/goals/:gid/steer

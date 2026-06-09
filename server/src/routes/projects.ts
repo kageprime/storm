@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { v4 as uuid } from 'uuid'
 import { getDb, saveDb } from '../db/index.js'
 import { authMiddleware, Variables } from '../auth/middleware.js'
-import { createSandbox, deleteSandbox } from '../sandbox.js'
+import { createSandbox, deleteSandbox, getProjectSandboxInfo, scanSandboxDirectories } from '../sandbox.js'
 
 const projects = new Hono<{ Variables: Variables }>()
 
@@ -10,6 +10,8 @@ projects.use('*', authMiddleware)
 
 projects.get('/', async (c) => {
   const { userId } = c.get('user')
+
+  scanSandboxDirectories(userId)
 
   const db = getDb()
   const result = db.exec(
@@ -38,12 +40,12 @@ projects.post('/', async (c) => {
   const db = getDb()
   const projectId = uuid()
 
-  const sandboxPath = await createSandbox(projectId, gitUrl || null)
+  const sandboxInfo = await createSandbox(projectId, gitUrl || null)
   const status = gitUrl ? 'cloning' : 'ready'
 
   db.run(
-    'INSERT INTO projects (id, user_id, name, git_url, status, sandbox_path) VALUES (?, ?, ?, ?, ?, ?)',
-    [projectId, userId, name, gitUrl || null, status, sandboxPath]
+    'INSERT INTO projects (id, user_id, name, git_url, status, sandbox_path, daytona_sandbox_id, daytona_opencode_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [projectId, userId, name, gitUrl || null, status, sandboxInfo.sandboxPath, sandboxInfo.daytonaSandboxId, sandboxInfo.daytonaOpencodeUrl]
   )
   saveDb()
 
@@ -54,7 +56,9 @@ projects.post('/', async (c) => {
       name,
       gitUrl: gitUrl || null,
       status,
-      sandboxPath,
+      sandboxPath: sandboxInfo.sandboxPath,
+      daytonaSandboxId: sandboxInfo.daytonaSandboxId,
+      daytonaOpencodeUrl: sandboxInfo.daytonaOpencodeUrl,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     },
@@ -67,7 +71,7 @@ projects.get('/:id', async (c) => {
 
   const db = getDb()
   const result = db.exec(
-    'SELECT id, name, git_url, status, sandbox_path, created_at, updated_at FROM projects WHERE id = ? AND user_id = ?',
+    'SELECT id, name, git_url, status, sandbox_path, daytona_sandbox_id, daytona_opencode_url, created_at, updated_at FROM projects WHERE id = ? AND user_id = ?',
     [projectId, userId]
   )
 
@@ -77,9 +81,9 @@ projects.get('/:id', async (c) => {
     return c.json({ error: 'Project not found', code: 'NOT_FOUND' })
   }
 
-  const [id, name, gitUrl, status, sandboxPath, createdAt, updatedAt] = rows[0] as [string, string, string | null, string, string, string, string]
+  const [id, name, gitUrl, status, sandboxPath, daytonaSandboxId, daytonaOpencodeUrl, createdAt, updatedAt] = rows[0] as [string, string, string | null, string, string | null, string | null, string | null, string, string]
 
-  return c.json({ project: { id, name, gitUrl, status, sandboxPath, createdAt, updatedAt } })
+  return c.json({ project: { id, name, gitUrl, status, sandboxPath, daytonaSandboxId, daytonaOpencodeUrl, createdAt, updatedAt } })
 })
 
 projects.delete('/:id', async (c) => {
@@ -89,7 +93,7 @@ projects.delete('/:id', async (c) => {
   const db = getDb()
 
   const result = db.exec(
-    'SELECT sandbox_path FROM projects WHERE id = ? AND user_id = ?',
+    'SELECT sandbox_path, daytona_sandbox_id, daytona_opencode_url FROM projects WHERE id = ? AND user_id = ?',
     [projectId, userId]
   )
 
@@ -99,12 +103,12 @@ projects.delete('/:id', async (c) => {
     return c.json({ error: 'Project not found', code: 'NOT_FOUND' })
   }
 
-  const [sandboxPath] = rows[0] as [string]
+  const [sandboxPath, daytonaSandboxId, daytonaOpencodeUrl] = rows[0] as [string | null, string | null, string | null]
 
   db.run('DELETE FROM projects WHERE id = ?', [projectId])
   saveDb()
 
-  await deleteSandbox(sandboxPath)
+  await deleteSandbox({ sandboxPath, daytonaSandboxId, daytonaOpencodeUrl })
 
   return c.json({ success: true })
 })

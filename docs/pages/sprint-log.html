@@ -298,7 +298,89 @@
         </tbody>
       </table>
 
-      <h3>Sprint 7 — Deployment <span class="badge badge-pending">Pending</span></h3>
+      <h3>Sprint 7 — Daytona & Preview Polish <span class="badge badge-done">Done</span></h3>
+      <p style="margin-bottom: 1.5rem; color: var(--storm-text-muted);">
+        Goal: Daytona cloud sandbox integration, preview proxying, PLAN.md workflow, parallel sub-agents, and UI refinements.
+      </p>
+      <table>
+        <thead>
+          <tr><th>Task</th><th>Status</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Daytona SDK integration</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>create/delete sandboxes, file API, dev server start — E2E tested</td>
+          </tr>
+          <tr>
+            <td>Unified sandbox manager</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Dispatches to Daytona or local based on DAYTONA_API_KEY env var</td>
+          </tr>
+          <tr>
+            <td>Preview proxied through server</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Strips CSP/X-Frame-Options, rewrites HTML asset paths, adds Daytona skip-warning header</td>
+          </tr>
+          <tr>
+            <td>Dev server manager</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Delegates to Daytona or local Vite spawn; returns { url, error? }</td>
+          </tr>
+          <tr>
+            <td>PREVIEW.md → PLAN.md workflow</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Plan written to sandbox as PLAN.md, updated live on step complete/failure</td>
+          </tr>
+          <tr>
+            <td>Parallel sub-agent execution</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Batch formation, Promise.all, parallel_start/parallel_complete SSE events</td>
+          </tr>
+          <tr>
+            <td>Preview HEAD handler fix</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Checks project existence in DB — returns 200 even without index.html</td>
+          </tr>
+          <tr>
+            <td>Lazy local sandbox creation</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>File routes create SANDBOX_ROOT/projectId on first access when sandbox_path is null</td>
+          </tr>
+          <tr>
+            <td>Step timeline UI</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Vertical pill list replaces step cards; click-to-expand tool calls</td>
+          </tr>
+          <tr>
+            <td>PlanNotice component</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Compact one-line plan status with approve/regenerate; replaces PlanSection</td>
+          </tr>
+          <tr>
+            <td>Real-time stepStates</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Tool calls appear immediately as SSE events arrive, no buffering</td>
+          </tr>
+          <tr>
+            <td>File tree live refresh</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Polls every 3s during execution with pulsing "live" indicator</td>
+          </tr>
+          <tr>
+            <td>Auth 401 handling</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Clears localStorage + redirects to / on 401 responses</td>
+          </tr>
+          <tr>
+            <td>User query persisted as message</td>
+            <td><span class="badge badge-done">Done</span></td>
+            <td>Initial goal message saved as role: 'user' in goal_messages table</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>Sprint 8 — Deployment <span class="badge badge-pending">Pending</span></h3>
       <p style="margin-bottom: 1rem; color: var(--storm-text-muted);">
         Plan: Docker Compose setup, DigitalOcean provisioning, domain configuration, CI/CD.
       </p>

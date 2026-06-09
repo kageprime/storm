@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS projects (
   name TEXT NOT NULL,
   git_url TEXT,
   status TEXT NOT NULL DEFAULT 'ready',
-  sandbox_path TEXT NOT NULL,
+  sandbox_path TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -43,3 +43,8 @@ CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id);
 CREATE INDEX IF NOT EXISTS idx_goals_project_id ON goals(project_id);
 CREATE INDEX IF NOT EXISTS idx_goal_messages_goal_id ON goal_messages(goal_id);
 `
+
+export const MIGRATIONS = [
+  `ALTER TABLE projects ADD COLUMN daytona_sandbox_id TEXT`,
+  `ALTER TABLE projects ADD COLUMN daytona_opencode_url TEXT`,
+]

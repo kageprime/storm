@@ -6,6 +6,7 @@ import type { Project } from '../lib/api'
 export function Dashboard() {
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [name, setName] = useState('')
   const [gitUrl, setGitUrl] = useState('')
@@ -14,10 +15,12 @@ export function Dashboard() {
 
   async function loadProjects() {
     try {
+      setLoadError(null)
       const res = await api.listProjects()
       setProjects(res.projects)
-    } catch {
-      // ignore
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to load projects'
+      setLoadError(msg)
     } finally {
       setLoading(false)
     }
@@ -130,6 +133,17 @@ export function Dashboard() {
       {/* Project list */}
       {loading ? (
         <div className="text-center text-storm-muted py-12">Loading...</div>
+      ) : loadError ? (
+        <div className="text-center py-12 border-2 border-dashed border-red-800/40 rounded-xl">
+          <p className="text-sm text-red-400 mb-1">Failed to load projects</p>
+          <p className="text-xs text-red-400/60">{loadError}</p>
+          <button
+            onClick={loadProjects}
+            className="mt-3 px-3 py-1.5 text-xs text-storm-accent border border-storm-accent/30 rounded-lg hover:bg-storm-accent/10 transition-colors"
+          >
+            Retry
+          </button>
+        </div>
       ) : projects.length === 0 ? (
         <div className="text-center text-storm-muted py-12 border-2 border-dashed border-storm-border rounded-xl">
           <p className="text-lg mb-2">No projects yet</p>

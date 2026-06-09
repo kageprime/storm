@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import * as api from '../lib/api'
+import type { StepState } from '../components/StepTimeline'
 
 export type SteerOption = { label: string; action: string }
 
 export type AgentLogEntry = {
   id: string
-  type: 'step_start' | 'tool_call' | 'file_edit' | 'step_complete' | 'error'
+  type: 'step_start' | 'tool_call' | 'file_edit' | 'step_complete' | 'error' | 'parallel_start' | 'parallel_complete'
   timestamp: number
   data: Record<string, unknown>
 }
@@ -29,6 +30,39 @@ export type ChatMessage = {
   timestamp: number
 }
 
+type ParallelStepState = {
+  step: number
+  description: string
+  toolCalls: Record<string, unknown>[]
+}
+
+function buildStepStatesFromMessages(messages: ChatMessage[]): Record<number, StepState> {
+  const map: Record<number, StepState> = {}
+  for (const msg of messages) {
+    if (msg.type === 'step_turn') {
+      const step = (msg.data?.step as number) || 0
+      const success = (msg.data?.success as boolean) ?? true
+      map[step] = {
+        step,
+        description: (msg.data?.description as string) || '',
+        status: success ? 'completed' : 'failed',
+        summary: (msg.data?.summary as string) || '',
+        toolCalls: msg.data?.toolCalls as Record<string, unknown>[] | undefined,
+      }
+    } else if (msg.type === 'step_failure') {
+      const step = (msg.data?.step as number) || 0
+      map[step] = {
+        step,
+        description: (msg.data?.description as string) || '',
+        status: 'failed',
+        toolCalls: msg.data?.toolCalls as Record<string, unknown>[] | undefined,
+        steerOptions: msg.data?.steerOptions as SteerOption[] | undefined,
+      }
+    }
+  }
+  return map
+}
+
 export function useAgentStream(projectId: string | null, goalId: string | null) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [goalStatus, setGoalStatus] = useState<string | null>(null)
@@ -37,13 +71,16 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
   const [totalSteps, setTotalSteps] = useState(0)
   const [agentLogs, setAgentLogs] = useState<AgentLogEntry[]>([])
   const [lastHtmlFile, setLastHtmlFile] = useState<string | null>(null)
+  const [stepStates, setStepStates] = useState<Record<number, StepState>>({})
   const disconnectRef = useRef<(() => void) | null>(null)
   const idCounter = useRef(0)
+  const currentStepRef = useRef(0)
 
-  // Buffers for grouping events into turns
+  // Buffers for grouping events into turns (for message persistence)
   const planBuffer = useRef<api.SubTask[] | null>(null)
   const toolCallBuffer = useRef<Record<string, unknown>[]>([])
   const stepBuffer = useRef<{ step: number; description: string } | null>(null)
+  const parallelSteps = useRef<Map<number, ParallelStepState>>(new Map())
 
   const addMessage = useCallback((msg: Omit<ChatMessage, 'id'>) => {
     const id = `msg-${++idCounter.current}`
@@ -100,6 +137,7 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
 
     setMessages([])
     setAgentLogs([])
+    setStepStates({})
 
     // Load persisted messages from server
     api.getGoalMessages(projectId, goalId).then((res) => {
@@ -108,12 +146,14 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
         fromServerMessage(msg, `msg-${++idCounter.current}`)
       )
       setMessages(mapped)
+      setStepStates(buildStepStatesFromMessages(mapped))
     })
 
     // Fetch initial goal state
     api.getGoal(projectId, goalId).then((res) => {
       setGoalStatus(res.goal.status)
       setCurrentStep(res.goal.currentStep)
+      currentStepRef.current = res.goal.currentStep
       setTotalSteps(res.goal.totalSteps)
     })
 
@@ -121,7 +161,6 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
       switch (event.type) {
         case 'status_change': {
           setGoalStatus(event.data.status as string)
-          // Don't add a message — just update state
           break
         }
         case 'plan_ready': {
@@ -132,13 +171,61 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
           planBuffer.current = plan
           break
         }
+        case 'parallel_start': {
+          const steps = event.data.steps as Array<{ step: number; description: string; agent?: string; files?: string[] }>
+          parallelSteps.current = new Map(
+            steps.map(s => [s.step, { step: s.step, description: s.description, toolCalls: [] }])
+          )
+          setStepStates(prev => {
+            const next = { ...prev }
+            for (const s of steps) {
+              next[s.step] = { step: s.step, description: s.description, status: 'active', toolCalls: [] }
+            }
+            return next
+          })
+          setAgentLogs((prev) => [
+            ...prev,
+            { id: `log-${++idCounter.current}`, type: 'parallel_start', timestamp: event.timestamp, data: event.data },
+          ])
+          break
+        }
+        case 'parallel_complete': {
+          parallelSteps.current = new Map()
+          setAgentLogs((prev) => [
+            ...prev,
+            { id: `log-${++idCounter.current}`, type: 'parallel_complete', timestamp: event.timestamp, data: event.data },
+          ])
+          break
+        }
         case 'step_start': {
-          stepBuffer.current = {
-            step: event.data.step as number,
-            description: event.data.description as string,
+          const stepNum = event.data.step as number
+          currentStepRef.current = stepNum
+          const ps = parallelSteps.current
+          if (ps.size > 0) {
+            const existing = ps.get(stepNum)
+            if (existing) {
+              existing.description = (event.data.description as string) || existing.description
+            }
+          } else {
+            stepBuffer.current = {
+              step: stepNum,
+              description: event.data.description as string,
+            }
+            toolCallBuffer.current = []
           }
-          toolCallBuffer.current = []
-          setCurrentStep(event.data.step as number)
+          setCurrentStep(stepNum)
+          setStepStates(prev => {
+            const existing = prev[stepNum]
+            return {
+              ...prev,
+              [stepNum]: {
+                step: stepNum,
+                description: (event.data.description as string) || existing?.description || '',
+                status: 'active',
+                toolCalls: existing?.toolCalls || [],
+              },
+            }
+          })
           setAgentLogs((prev) => [
             ...prev,
             { id: `log-${++idCounter.current}`, type: 'step_start', timestamp: event.timestamp, data: event.data },
@@ -146,11 +233,29 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
           break
         }
         case 'step_progress': {
-          // Ignored — not useful for chat
           break
         }
         case 'tool_call': {
-          toolCallBuffer.current.push(event.data as Record<string, unknown>)
+          const ps = parallelSteps.current
+          const stepNum = (event.data.step as number) || currentStepRef.current
+          const tc = event.data as Record<string, unknown>
+          if (ps.size > 0 && stepNum != null && ps.has(stepNum)) {
+            ps.get(stepNum)!.toolCalls.push(tc)
+          } else {
+            toolCallBuffer.current.push(tc)
+          }
+          // Update step states in real-time so tool calls appear immediately
+          setStepStates(prev => {
+            const existing = prev[stepNum]
+            if (!existing) return prev
+            return {
+              ...prev,
+              [stepNum]: {
+                ...existing,
+                toolCalls: [...(existing.toolCalls || []), tc],
+              },
+            }
+          })
           setAgentLogs((prev) => [
             ...prev,
             { id: `log-${++idCounter.current}`, type: 'tool_call', timestamp: event.timestamp, data: event.data },
@@ -170,10 +275,11 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
           break
         }
         case 'step_complete': {
-          const step = event.data.step as number
+          const stepNum = event.data.step as number
           const description = event.data.description as string
           const success = event.data.success as boolean
           const summary = event.data.summary as string
+          const ps = parallelSteps.current
 
           setFileChangeCount((c) => c + 1)
           setAgentLogs((prev) => [
@@ -181,27 +287,63 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
             { id: `log-${++idCounter.current}`, type: 'step_complete', timestamp: event.timestamp, data: event.data },
           ])
 
-          if (success) {
-            const toolCalls = [...toolCallBuffer.current]
-            toolCallBuffer.current = []
-            stepBuffer.current = null
-
-            addMessage({
-              role: 'assistant',
-              text: `**Step ${step}: ${description}**`,
-              type: 'step_turn',
-              data: {
-                step,
-                description,
-                toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-                success: true,
-                summary,
+          // Update step state
+          setStepStates(prev => {
+            const existing = prev[stepNum]
+            return {
+              ...prev,
+              [stepNum]: {
+                ...existing,
+                step: stepNum,
+                description: existing?.description || description,
+                status: success ? 'completed' : 'failed',
+                summary: summary || existing?.summary || '',
+                toolCalls: existing?.toolCalls || [],
               },
-              timestamp: event.timestamp,
-            })
+            }
+          })
+
+          // Persist as chat message for page reload support
+          if (ps.size > 0) {
+            const entry = ps.get(stepNum)
+            const toolCalls = entry ? [...entry.toolCalls] : []
+            if (entry) entry.toolCalls = []
+            if (success) {
+              addMessage({
+                role: 'assistant',
+                text: `**Step ${stepNum}: ${description}**`,
+                type: 'step_turn',
+                data: {
+                  step: stepNum,
+                  description,
+                  toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+                  success: true,
+                  summary,
+                },
+                timestamp: event.timestamp,
+              })
+            }
           } else {
-            // Keep step info and tool calls buffered — steering_needed follows
-            stepBuffer.current = { step, description }
+            if (success) {
+              const toolCalls = [...toolCallBuffer.current]
+              toolCallBuffer.current = []
+              stepBuffer.current = null
+              addMessage({
+                role: 'assistant',
+                text: `**Step ${stepNum}: ${description}**`,
+                type: 'step_turn',
+                data: {
+                  step: stepNum,
+                  description,
+                  toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+                  success: true,
+                  summary,
+                },
+                timestamp: event.timestamp,
+              })
+            } else {
+              stepBuffer.current = { step: stepNum, description }
+            }
           }
           break
         }
@@ -209,7 +351,6 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
           const options = event.data.options as SteerOption[]
 
           if (options.some((o) => o.action === 'approve')) {
-            // Flush plan buffer
             const plan = planBuffer.current
             planBuffer.current = null
             if (plan) {
@@ -222,33 +363,63 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
               })
             }
           } else {
-            // Flush failure step buffer
-            const step = stepBuffer.current
-            const toolCalls = [...toolCallBuffer.current]
-            toolCallBuffer.current = []
-            stepBuffer.current = null
-            if (step) {
-              addMessage({
-                role: 'assistant',
-                text: `**Step ${step.step}: ${step.description}**`,
-                type: 'step_failure',
-                data: {
-                  step: step.step,
-                  description: step.description,
-                  toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-                  success: false,
-                  steerOptions: options,
-                },
-                timestamp: event.timestamp,
-              })
+            // Mark all active steps as failed
+            setStepStates(prev => {
+              const next = { ...prev }
+              for (const [stepNum, state] of Object.entries(prev)) {
+                if (state.status === 'active') {
+                  next[Number(stepNum)] = { ...state, status: 'failed', steerOptions: options }
+                }
+              }
+              return next
+            })
+
+            const ps = parallelSteps.current
+            if (ps.size > 0) {
+              for (const entry of ps.values()) {
+                addMessage({
+                  role: 'assistant',
+                  text: `**Step ${entry.step}: ${entry.description}**`,
+                  type: 'step_failure',
+                  data: {
+                    step: entry.step,
+                    description: entry.description,
+                    toolCalls: entry.toolCalls.length > 0 ? [...entry.toolCalls] : undefined,
+                    success: false,
+                    steerOptions: options,
+                  },
+                  timestamp: event.timestamp,
+                })
+              }
+              ps.clear()
             } else {
-              addMessage({
-                role: 'assistant',
-                text: event.data.prompt as string,
-                type: 'step_failure',
-                data: { steerOptions: options },
-                timestamp: event.timestamp,
-              })
+              const step = stepBuffer.current
+              const toolCalls = [...toolCallBuffer.current]
+              toolCallBuffer.current = []
+              stepBuffer.current = null
+              if (step) {
+                addMessage({
+                  role: 'assistant',
+                  text: `**Step ${step.step}: ${step.description}**`,
+                  type: 'step_failure',
+                  data: {
+                    step: step.step,
+                    description: step.description,
+                    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+                    success: false,
+                    steerOptions: options,
+                  },
+                  timestamp: event.timestamp,
+                })
+              } else {
+                addMessage({
+                  role: 'assistant',
+                  text: event.data.prompt as string,
+                  type: 'step_failure',
+                  data: { steerOptions: options },
+                  timestamp: event.timestamp,
+                })
+              }
             }
           }
           break
@@ -267,6 +438,8 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
           planBuffer.current = null
           toolCallBuffer.current = []
           stepBuffer.current = null
+          parallelSteps.current = new Map()
+          setStepStates({})
           setAgentLogs((prev) => [
             ...prev,
             { id: `log-${++idCounter.current}`, type: 'error', timestamp: event.timestamp, data: event.data },
@@ -285,6 +458,8 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
           planBuffer.current = null
           toolCallBuffer.current = []
           stepBuffer.current = null
+          parallelSteps.current = new Map()
+          setStepStates({})
           addMessage({
             role: 'system',
             text: `🏁 ${event.data.message as string}`,
@@ -356,5 +531,6 @@ export function useAgentStream(projectId: string | null, goalId: string | null) 
     addMessage,
     agentLogs,
     lastHtmlFile,
+    stepStates,
   }
 }

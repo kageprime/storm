@@ -34,14 +34,17 @@
           DB["SQLite (sql.js)<br/>users, projects<br/>goals, goal_messages"]
           O["opencode server<br/>port 4096"]
           D["Free DeepSeek Model"]
-          S["Sandbox Directory<br/>1 per project<br/>git init / clone"]
+          LOCAL["Local Sandbox Dir<br/>1 per project<br/>SANDBOX_ROOT/:id"]
+          DAYTONA["Daytona Cloud VM<br/>1 per project<br/>public sandbox"]
 
           B <-->|"HTTP / SSE<br/>fetch ReadableStream"| H
           H -->|"Files API<br/>tree + content"| B
           H -->|"SQLite"| DB
           H -->|"@opencode-ai/sdk"| O
           O -->|"opencode/deepseek-v4-flash-free"| D
-          D -.->|"reads/writes"| S
+          D -.->|"reads/writes"| LOCAL
+          D -.->|"reads/writes"| DAYTONA
+          H -.->|"Daytona API<br/>when DAYTONA_API_KEY set"| DAYTONA
       </pre>
 
       <h3>Agent Loop Flow</h3>
@@ -98,7 +101,7 @@
         </div>
         <div class="card">
           <h3>Why Sandboxed Directories?</h3>
-          <p>Each project gets an isolated filesystem. opencode operates only within that directory. MVP uses simple dirs; Docker containers planned for production isolation.</p>
+          <p>Each project gets an isolated filesystem. In development mode, local directories under <code>SANDBOX_ROOT</code>. In production with <code>DAYTONA_API_KEY</code>, Daytona cloud VMs with auto-stop (60 min) and auto-delete (24h). The unified sandbox manager dispatches transparently based on the env var.</p>
         </div>
         <div class="card">
           <h3>Why Free DeepSeek?</h3>
@@ -126,7 +129,8 @@
       <pre class="mermaid">
         graph TD
           PT["PreviewTab (iframe)"]
-          PR["/api/preview/:projectId/:path"]
+          HEAD["HEAD /api/preview/:id/<br/>fast DB check → 200<br/>or static index.html"]
+          PR["GET /api/preview/:projectId/:path"]
           DS["DevServerManager<br/>spawn npm run dev"]
           SF["Static file<br/>sandbox/:path"]
           DS2{"Has package.json<br/>+ dev/start script?"}
@@ -134,9 +138,19 @@
           HTML{"Response is<br/>text/html?"}
           RW["Rewrite absolute paths<br/>/assets/* → /api/preview/:id/assets/*"]
           DB["SQLite lookup<br/>sandbox_path"]
+          DAYTONA{"DAYTONA_API_KEY<br/>set?"}
+          DPROXY["Proxy to<br/>Daytona preview URL"]
+          DFS["Daytona FS read<br/>from sandbox VM"]
 
-          PT --> PR
-          PR --> DB
+          PT -->|"HEAD probe"| HEAD
+          HEAD -->|"200"| PT
+          HEAD -->|"404"| START["Start Dev Server btn"]
+          PT -->|"if 200"| PR
+          PR --> DAYTONA
+          DAYTONA -->|"yes"| DPROXY
+          DPROXY -->|"fallback"| DFS
+          DFS --> PT
+          DAYTONA -->|"no"| DB
           DB --> DS2
           DS2 -->|"no"| SF
           DS2 -->|"yes"| OK
@@ -147,6 +161,7 @@
           RW --> PT
           HTML -->|"no (js, css, img...)"| PT
           SF --> PT
+          DFS --> PT
       </pre>
     </div>
   </section>

@@ -21,7 +21,7 @@ goals.post('/:projectId/goals', async (c) => {
   const db = getDb()
 
   const projResult = db.exec(
-    'SELECT id, sandbox_path FROM projects WHERE id = ? AND user_id = ?',
+    'SELECT id, sandbox_path, daytona_opencode_url FROM projects WHERE id = ? AND user_id = ?',
     [projectId, userId]
   )
 
@@ -31,7 +31,8 @@ goals.post('/:projectId/goals', async (c) => {
     return c.json({ error: 'Project not found', code: 'NOT_FOUND' })
   }
 
-  const sandboxPath = projRow[1] as string
+  const sandboxPath = projRow[1] as string | null
+  const daytonaOpencodeUrl = projRow[2] as string | null
   const goalId = uuid()
 
   db.run(
@@ -41,7 +42,7 @@ goals.post('/:projectId/goals', async (c) => {
   saveDb()
 
   // Fire-and-forget: process the goal in the background
-  orchestrator.submitGoal(goalId, projectId, goalText, sandboxPath).catch((err) => {
+  orchestrator.submitGoal(goalId, projectId, goalText, sandboxPath, daytonaOpencodeUrl).catch((err) => {
     console.error('Goal processing failed:', err)
     const db = getDb()
     db.run('UPDATE goals SET status = ?, error = ? WHERE id = ?', ['failed', err instanceof Error ? err.message : String(err), goalId])

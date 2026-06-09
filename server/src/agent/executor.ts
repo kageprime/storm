@@ -1,4 +1,6 @@
-import type { OpencodeClient } from '@opencode-ai/sdk'
+import type { OpencodeClient, Event } from '@opencode-ai/sdk'
+import type { EventMessagePartUpdated, EventSessionIdle, EventSessionError, EventFileEdited } from '@opencode-ai/sdk'
+import { CODING_CONVENTIONS, promptForAgent } from './planner.js'
 
 export type ExecutorEvent = {
   type: 'step_progress' | 'tool_call' | 'file_edit' | 'text' | 'error' | 'step_complete'
@@ -8,16 +10,16 @@ export type ExecutorEvent = {
 
 export type EventCallback = (event: ExecutorEvent) => void
 
-/**
- * Executes a single sub-task via opencode and streams events back.
- * Reuses the same session across steps for context continuity.
- */
+const STEP_TIMEOUT = 10 * 60 * 1000
+
 export async function executeStep(
   client: OpencodeClient,
-  sandboxPath: string,
+  sandboxPath: string | null,
   stepDescription: string,
   context: string,
   onEvent: EventCallback,
+  agentName?: string,
+  systemPrompt?: string,
 ): Promise<{ success: boolean; summary: string }> {
   const prompt = `## Current Task
 ${stepDescription}
@@ -33,93 +35,150 @@ Please complete this task. Work in the project directory and make all necessary 
     timestamp: Date.now(),
   })
 
+  const query = sandboxPath ? { directory: sandboxPath } : {}
+
   try {
-    // Create a fresh session for each step to avoid context issues
     const sessionRes = await client.session.create({
       body: { title: stepDescription.slice(0, 100) },
-      query: { directory: sandboxPath },
+      query,
     })
     const sessionData = sessionRes.data as { id?: string } | undefined
     if (!sessionData?.id) throw new Error('Failed to create execution session')
     const sessionId = sessionData.id
 
-    const result = await client.session.prompt({
+    const ac = new AbortController()
+    const timeout = setTimeout(() => ac.abort(new Error('Step execution timed out')), STEP_TIMEOUT)
+
+    const eventResult = await client.event.subscribe({
+      signal: ac.signal as AbortSignal,
+      query: sandboxPath ? { directory: sandboxPath } : undefined,
+    })
+    const stream = eventResult.stream as AsyncGenerator<Event>
+
+    const system = systemPrompt || promptForAgent(agentName) || CODING_CONVENTIONS
+
+    await client.session.promptAsync({
       path: { id: sessionId },
       body: {
         parts: [{ type: 'text', text: prompt }],
         model: { providerID: 'opencode', modelID: 'deepseek-v4-flash-free' },
+        system,
       },
-      query: { directory: sandboxPath },
+      query,
     })
 
-    const info = result.data as {
-      info?: { error?: { message?: string } }
-      parts?: Array<{ type?: string; text?: string; tool?: string; callID?: string; state?: Record<string, unknown>; id?: string }>
-    }
+    let sessionError: string | null = null
+    let finalSummary = ''
+    const emittedFiles = new Set<string>()
 
-    if (info?.info?.error) {
-      onEvent({
-        type: 'error',
-        data: { message: info.info.error.message || 'Unknown error' },
-        timestamp: Date.now(),
-      })
+    for await (const raw of stream) {
+      const event = raw as Event
+      const props = event.properties as Record<string, unknown> | undefined
+      if (props?.sessionID !== sessionId) continue
 
-      return { success: false, summary: info.info.error.message || 'Task failed' }
-    }
+      if (event.type === 'message.part.updated') {
+        const part = (event as EventMessagePartUpdated).properties.part
+        if (!part) continue
 
-    // Emit tool call events from response parts
-    const toolParts = info?.parts?.filter((p) => p.type === 'tool') ?? []
-    for (const part of toolParts) {
-      const state = part.state as Record<string, unknown> | undefined
-      const input = (state?.input as Record<string, unknown>) || {}
-      const fileName =
-        (input.path as string) ||
-        (input.file as string) ||
-        (input.file_path as string) ||
-        ''
+        if (part.type === 'text' && part.text) {
+          onEvent({
+            type: 'step_progress',
+            data: { message: part.text },
+            timestamp: Date.now(),
+          })
+        } else if (part.type === 'tool') {
+          const state = (part.state as Record<string, unknown>) || {}
+          const input = (state.input as Record<string, unknown>) || {}
+          const fileName = (input.path as string) || (input.file as string) || (input.file_path as string) || ''
+          const status = (state.status as string) || 'completed'
 
-      onEvent({
-        type: 'tool_call',
-        data: {
-          tool: part.tool || 'unknown',
-          callID: part.callID || '',
-          input,
-          output: (state?.output as string) || (state?.error as string) || '',
-          status: (state?.status as string) || 'completed',
-          title: (state?.title as string) || '',
-          file: fileName,
-        },
-        timestamp: Date.now(),
-      })
+          onEvent({
+            type: 'tool_call',
+            data: {
+              tool: part.tool || 'unknown',
+              callID: part.callID || '',
+              input,
+              output: (state.output as string) || (state.error as string) || '',
+              status,
+              title: (state.title as string) || '',
+              file: fileName,
+            },
+            timestamp: Date.now(),
+          })
 
-      if (fileName) {
+          if (fileName && (status === 'completed' || status === 'error')) {
+            const key = `${part.id}:${fileName}`
+            if (!emittedFiles.has(key)) {
+              emittedFiles.add(key)
+              onEvent({
+                type: 'file_edit',
+                data: { file: fileName },
+                timestamp: Date.now(),
+              })
+            }
+          }
+        }
+      } else if (event.type === 'file.edited') {
+        const filePath = (event as EventFileEdited).properties.file
+        if (filePath) {
+          onEvent({
+            type: 'file_edit',
+            data: { file: filePath },
+            timestamp: Date.now(),
+          })
+        }
+      } else if (event.type === 'session.idle') {
+        break
+      } else if (event.type === 'session.error') {
+        const errObj = (event as EventSessionError).properties?.error as Record<string, unknown> | undefined
+        sessionError = (errObj?.message as string) || 'Session error occurred'
         onEvent({
-          type: 'file_edit',
-          data: { file: fileName },
+          type: 'error',
+          data: { message: sessionError },
           timestamp: Date.now(),
         })
+        break
       }
     }
 
-    const textParts = info?.parts?.filter((p) => p.type === 'text') ?? []
-    const summary = textParts.map((p) => p.text ?? '').join('\n')
+    clearTimeout(timeout)
+    ac.abort()
+
+    if (sessionError) {
+      return { success: false, summary: sessionError }
+    }
+
+    try {
+      const msgRes = await client.session.messages({
+        path: { id: sessionId },
+      })
+      const messages = (msgRes.data as Array<{ role?: string; parts?: Array<{ type?: string; text?: string }> }>) || []
+      const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant')
+      if (lastAssistant?.parts) {
+        const texts = lastAssistant.parts
+          .filter(p => p.type === 'text')
+          .map(p => p.text || '')
+          .filter(Boolean)
+        if (texts.length > 0) finalSummary = texts.join('\n')
+      }
+    } catch {
+      // Non-critical
+    }
 
     onEvent({
       type: 'step_complete',
-      data: { summary: summary.slice(0, 500) },
+      data: { summary: finalSummary.slice(0, 500) },
       timestamp: Date.now(),
     })
 
-    return { success: true, summary: summary.slice(0, 500) }
+    return { success: true, summary: finalSummary.slice(0, 500) }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
-
     onEvent({
       type: 'error',
       data: { message },
       timestamp: Date.now(),
     })
-
     return { success: false, summary: message }
   }
 }

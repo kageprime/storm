@@ -2,7 +2,7 @@ import initSqlJs, { Database as SqlJsDatabase } from 'sql.js'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { SCHEMA } from './schema.js'
+import { SCHEMA, MIGRATIONS } from './schema.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = join(__dirname, '..', '..', 'data')
@@ -29,6 +29,16 @@ export async function initDb(): Promise<SqlJsDatabase> {
   }
 
   db.run(SCHEMA)
+
+  // Apply incremental migrations (swallow errors for existing columns)
+  for (const migration of MIGRATIONS) {
+    try {
+      db.run(migration)
+    } catch {
+      // column already exists, ignore
+    }
+  }
+
   saveDb()
 
   return db

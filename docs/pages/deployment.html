@@ -40,12 +40,14 @@
           CA["Caddy<br/>Reverse Proxy<br/>:443 HTTPS + :80 redirect<br/>Auto TLS (Let's Encrypt)<br/>Serves storm.example.com"]
           SR["storm-server (Docker)<br/>:3000 internal<br/>Hono + opencode SDK<br/>Serves: /api/**, /assets/**<br/>SQLite volume: data/"]
           OC["opencode server (Docker)<br/>:4096 internal<br/>opencode serve --port 4096"]
-          SB["Sandbox directories<br/>/data/sandboxes/<br/>shared volume"]
+          SB["Sandbox directories<br/>/data/sandboxes/<br/>shared volume<br/>(local mode)"]
+          DV["Daytona Cloud VMs<br/>1 sandbox per project<br/>public: true<br/>auto-stop 60m, auto-delete 24h<br/>(when DAYTONA_API_KEY set)"]
 
           I -->|"port 443/80"| CA
           CA -->|":3000"| SR
           SR -->|"createOpencodeClient({ baseUrl: 'http://opencode:4096' })"| OC
           OC --> SB
+          SR -.->|"Daytona SDK<br/>files, processes, preview"| DV
       </pre>
 
       <h3>Quick Start</h3>
@@ -74,6 +76,8 @@ docker compose logs -f</pre>
           <tr><td><code>JWT_SECRET</code></td><td><em>required in prod</em></td><td>Secret for signing JWT tokens</td></tr>
           <tr><td><code>SANDBOX_ROOT</code></td><td><code>./sandboxes</code></td><td>Directory for sandboxed projects</td></tr>
           <tr><td><code>OPCODE_URL</code></td><td><code>http://127.0.0.1:4096</code></td><td>URL of running opencode server</td></tr>
+          <tr><td><code>DAYTONA_API_KEY</code></td><td><em>optional</em></td><td>If set, uses Daytona cloud VMs for sandbox isolation instead of local directories</td></tr>
+          <tr><td><code>DAYTONA_ORGANIZATION_ID</code></td><td><em>optional</em></td><td>Daytona org ID (required with DAYTONA_API_KEY)</td></tr>
           <tr><td><code>VITE_API_URL</code></td><td><code>/api</code></td><td>Frontend API base URL (dev: http://localhost:3000)</td></tr>
         </tbody>
       </table>

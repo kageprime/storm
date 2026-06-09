@@ -5,49 +5,46 @@ interface OpenCodeInstance {
   refCount: number
 }
 
-/**
- * Manages opencode client connections per sandbox directory.
- * Connects to the existing opencode server (port 4096) with
- * per-request directory isolation via the `directory` query param.
- */
 class OpenCodeManager {
   private instances = new Map<string, OpenCodeInstance>()
-  private baseClient: OpencodeClient | null = null
+  private clients = new Map<string, OpencodeClient>()
 
-  async getOrCreate(sandboxPath: string): Promise<OpencodeClient> {
-    const existing = this.instances.get(sandboxPath)
+  async getOrCreate(key: string, baseUrl?: string): Promise<OpencodeClient> {
+    const existing = this.instances.get(key)
     if (existing) {
       existing.refCount++
       return existing.client
     }
 
-    if (!this.baseClient) {
-      this.baseClient = createOpencodeClient({
-        baseUrl: 'http://127.0.0.1:4096',
+    let client = this.clients.get(baseUrl || 'default')
+    if (!client) {
+      client = createOpencodeClient({
+        baseUrl: baseUrl || 'http://127.0.0.1:4096',
       })
+      this.clients.set(baseUrl || 'default', client)
     }
 
     const entry: OpenCodeInstance = {
-      client: this.baseClient,
+      client,
       refCount: 1,
     }
 
-    this.instances.set(sandboxPath, entry)
+    this.instances.set(key, entry)
     return entry.client
   }
 
-  async release(sandboxPath: string): Promise<void> {
-    const entry = this.instances.get(sandboxPath)
+  async release(key: string): Promise<void> {
+    const entry = this.instances.get(key)
     if (!entry) return
 
     entry.refCount--
     if (entry.refCount <= 0) {
-      this.instances.delete(sandboxPath)
+      this.instances.delete(key)
     }
   }
 
-  getInstance(sandboxPath: string): OpenCodeInstance | undefined {
-    return this.instances.get(sandboxPath)
+  getInstance(key: string): OpenCodeInstance | undefined {
+    return this.instances.get(key)
   }
 }
 

@@ -21,6 +21,13 @@ async function request<T>(
     body: body ? JSON.stringify(body) : undefined,
   })
 
+  if (res.status === 401) {
+    localStorage.removeItem('storm_token')
+    localStorage.removeItem('storm_user')
+    window.location.href = '/'
+    throw new Error('Session expired')
+  }
+
   const data = await res.json()
 
   if (!res.ok) {
@@ -182,7 +189,7 @@ export function getPreviewUrl(projectId: string, filePath: string): string {
 // --- SSE ---
 
 export type GoalEvent = {
-  type: 'status_change' | 'plan_ready' | 'step_start' | 'step_progress' | 'step_complete' | 'tool_call' | 'file_edit' | 'steering_needed' | 'user_message' | 'error' | 'done'
+  type: 'status_change' | 'plan_ready' | 'step_start' | 'step_progress' | 'step_complete' | 'tool_call' | 'file_edit' | 'steering_needed' | 'user_message' | 'error' | 'done' | 'parallel_start' | 'parallel_complete'
   goalId: string
   projectId: string
   data: Record<string, unknown>

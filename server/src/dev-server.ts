@@ -2,6 +2,7 @@ import { spawn, ChildProcess } from 'node:child_process'
 import { existsSync, readFileSync, appendFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createConnection } from 'node:net'
+import { isDaytonaMode, startDaytonaDevServer, stopDaytonaDevServer, getDaytonaDevServerUrl, type DevServerResult } from './daytona.js'
 
 interface DevServerInstance {
   proc: ChildProcess
@@ -21,17 +22,6 @@ function checkPort(port: number): Promise<boolean> {
   })
 }
 
-async function scanPorts(ports: number[]): Promise<number | null> {
-  const deadline = Date.now() + PORT_TIMEOUT
-  while (Date.now() < deadline) {
-    for (const p of ports) {
-      if (await checkPort(p)) return p
-    }
-    await new Promise((r) => setTimeout(r, 800))
-  }
-  return null
-}
-
 function log(projectId: string, msg: string) {
   console.log(`[dev-server] [${projectId.slice(0, 8)}] ${msg}`)
 }
@@ -41,6 +31,10 @@ function logErr(projectId: string, msg: string) {
 }
 
 export function stopDevServer(projectId: string) {
+  if (isDaytonaMode()) {
+    stopDaytonaDevServer(projectId)
+    return
+  }
   const s = servers.get(projectId)
   if (!s) return
   s.proc.kill('SIGTERM')
@@ -50,17 +44,35 @@ export function stopDevServer(projectId: string) {
 }
 
 export function stopAllDevServers() {
+  if (isDaytonaMode()) {
+    return
+  }
   for (const id of [...servers.keys()]) stopDevServer(id)
 }
 
 export function getDevServerPort(projectId: string): number | null {
+  if (isDaytonaMode()) {
+    return null
+  }
   const s = servers.get(projectId)
   return s && !s.proc.killed ? s.port : null
 }
 
-export async function ensureDevServer(projectId: string, sandboxPath: string): Promise<number | null> {
+export function getDevServerUrl(projectId: string): string | null {
+  if (isDaytonaMode()) {
+    return getDaytonaDevServerUrl(projectId)
+  }
+  const port = getDevServerPort(projectId)
+  return port ? `http://127.0.0.1:${port}` : null
+}
+
+export async function ensureDevServer(projectId: string, sandboxPath: string, daytonaSandboxId?: string | null): Promise<DevServerResult> {
+  if (isDaytonaMode() && daytonaSandboxId) {
+    return startDaytonaDevServer(daytonaSandboxId, projectId)
+  }
+
   const existingPort = getDevServerPort(projectId)
-  if (existingPort) return existingPort
+  if (existingPort) return { url: `http://127.0.0.1:${existingPort}` }
 
   // Kill any leftover vite/node processes from previous runs in this sandbox
   for (const [id, s] of servers) {
@@ -68,14 +80,23 @@ export async function ensureDevServer(projectId: string, sandboxPath: string): P
   }
 
   const pkgPath = join(sandboxPath, 'package.json')
-  if (!existsSync(pkgPath)) return null
+  if (!existsSync(pkgPath)) {
+    logErr(projectId, `No package.json at ${pkgPath}`)
+    return { url: null, error: 'Project has no package.json' }
+  }
 
   let pkg: Record<string, unknown>
-  try { pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as Record<string, unknown> } catch { return null }
+  try { pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as Record<string, unknown> } catch {
+    logErr(projectId, `Invalid package.json at ${pkgPath}`)
+    return { url: null, error: 'Invalid package.json' }
+  }
   const scripts = pkg.scripts as Record<string, string> | undefined
   const hasVite = existsSync(join(sandboxPath, 'vite.config.js')) || existsSync(join(sandboxPath, 'vite.config.ts'))
   const devCmd = scripts?.dev || scripts?.start
-  if (!devCmd && !hasVite) return null
+  if (!devCmd && !hasVite) {
+    logErr(projectId, 'No dev script or vite config found')
+    return { url: null, error: 'No dev script or vite config found in package.json' }
+  }
 
   log(projectId, 'Starting...')
 
@@ -95,7 +116,7 @@ export async function ensureDevServer(projectId: string, sandboxPath: string): P
       log(projectId, 'npm install complete')
     } catch (e) {
       logErr(projectId, `npm install failed: ${e}`)
-      return null
+      return { url: null, error: `npm install failed: ${e}` }
     }
   }
 
@@ -108,12 +129,13 @@ export async function ensureDevServer(projectId: string, sandboxPath: string): P
 
   // Probe ports: try a specific port, then fall back to common ones
   const preferredPort = 5000 + Math.floor(Math.random() * 2000)
-  const candidatePorts = [preferredPort, 5173, 4173, 3000, 8080]
+  const fallbackPorts: number[] = []
+  for (let i = 0; i <= 10; i++) fallbackPorts.push(preferredPort + i)
+  fallbackPorts.push(5173, 4173)
 
   let proc: ChildProcess
 
   if (hasVite) {
-    // Direct vite — most reliable for Vite projects
     proc = spawn('cmd.exe', [
       '/c', 'npx', 'vite', '--port', String(preferredPort),
       '--host', '127.0.0.1', '--open', 'false', '--strictPort', 'false',
@@ -123,7 +145,6 @@ export async function ensureDevServer(projectId: string, sandboxPath: string): P
       env: { ...process.env, BROWSER: 'none', PORT: String(preferredPort) },
     })
   } else {
-    // Generic npm run dev / start with PORT env
     proc = spawn('cmd.exe', ['/c', 'npm', 'run', 'dev'], {
       cwd: sandboxPath,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -137,8 +158,7 @@ export async function ensureDevServer(projectId: string, sandboxPath: string): P
   proc.stdout?.on('data', (d: Buffer) => {
     const text = d.toString()
     stdoutBuf += text
-    // Try to extract port from Vite output: "Local:   http://localhost:PORT/"
-    const m = text.match(/localhost[:\s](\d{4,5})/)
+    const m = text.match(/(?:localhost|127\.0\.0\.1|0\.0\.0\.0)[:\s](\d{4,5})/)
     if (m && !detectedPort) {
       detectedPort = parseInt(m[1], 10)
     }
@@ -152,23 +172,21 @@ export async function ensureDevServer(projectId: string, sandboxPath: string): P
     }
   })
 
-  servers.set(projectId, { proc, port: 0 }) // placeholder port
+  servers.set(projectId, { proc, port: 0 })
 
   // Wait for the server to become reachable
   const deadline = Date.now() + PORT_TIMEOUT
   let connectedPort: number | null = null
 
   while (Date.now() < deadline) {
-    // If Vite printed a port to stdout, use it
     if (detectedPort) {
       if (await checkPort(detectedPort)) {
         connectedPort = detectedPort
         break
       }
     }
-    // Also check the preferred port and other candidates
-    for (const p of [preferredPort, 5173, 4173]) {
-      if (p === detectedPort) continue // already checked
+    for (const p of fallbackPorts) {
+      if (p === detectedPort) continue
       if (await checkPort(p)) {
         connectedPort = p
         break
@@ -181,10 +199,10 @@ export async function ensureDevServer(projectId: string, sandboxPath: string): P
   if (!connectedPort) {
     logErr(projectId, `Timeout — no port detected. Stdout snippet: ${stdoutBuf.slice(0, 300)}`)
     stopDevServer(projectId)
-    return null
+    return { url: null, error: `Dev server did not start within ${PORT_TIMEOUT / 1000}s. Check dev-server.log for details.` }
   }
 
   servers.set(projectId, { proc, port: connectedPort })
   log(projectId, `Ready on port ${connectedPort}`)
-  return connectedPort
+  return { url: `http://127.0.0.1:${connectedPort}` }
 }
