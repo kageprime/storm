@@ -81,7 +81,7 @@ export async function ensureDevServer(projectId: string, sandboxPath: string, da
 
   const pkgPath = join(sandboxPath, 'package.json')
   if (!existsSync(pkgPath)) {
-    logErr(projectId, `No package.json at ${pkgPath}`)
+    log(projectId, 'No package.json — skipping dev server')
     return { url: null, error: 'Project has no package.json' }
   }
 

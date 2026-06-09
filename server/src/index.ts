@@ -1,8 +1,11 @@
-import 'dotenv/config'
+import { config } from 'dotenv'
+import { fileURLToPath } from 'url'
+import { dirname, resolve } from 'path'
+config({ path: resolve(dirname(fileURLToPath(import.meta.url)), '..', '.env') })
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, extname } from 'node:path'
 import { initDb, closeDb, getDb } from './db/index.js'
 import authRoutes from './auth/routes.js'
@@ -152,6 +155,15 @@ async function serveStatic(c: any, projectId: string, filePath?: string): Promis
       try { statSync(fp); return serveStatic(c, projectId, join(base, name).slice(sandboxPath.length + 1)) } catch {}
     }
   }
+
+  // Fallback: serve the first .html file found in the sandbox root
+  try {
+    const files = readdirSync(sandboxPath).filter(f => f.endsWith('.html'))
+    if (files.length > 0) {
+      return c.redirect(`/api/preview/${projectId}/${files[0]}`, 302)
+    }
+  } catch {}
+
   return c.json({ error: 'No index.html found', code: 'NOT_FOUND' }, 404)
 }
 
@@ -293,7 +305,7 @@ previewRouter.get('/preview/:projectId', async (c) => {
     // Fallback: serve files directly from Daytona sandbox FS
     const staticResp = await serveDaytonaStatic(c, projectId)
     if (staticResp) return staticResp
-    return c.json({ error: 'No index.html found', code: 'NOT_FOUND' }, 404)
+    // Daytona unavailable — fall through to local sandbox
   }
 
   const proxyResp = await serveViaProxy(c, projectId, '/')
